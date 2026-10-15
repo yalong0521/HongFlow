@@ -1,0 +1,32 @@
+{
+  "color": [
+    {
+      "name": "card_text_primary",
+      "value": "#ECF4F8"
+    },
+    {
+      "name": "card_text_secondary",
+      "value": "#A1BBCB"
+    },
+    {
+      "name": "card_connected_accent",
+      "value": "#9BE6CD"
+    },
+    {
+      "name": "card_control_idle",
+      "value": "#24475F"
+    },
+    {
+      "name": "card_control_foreground",
+      "value": "#D9EDF5"
+    },
+    {
+      "name": "card_control_connected",
+      "value": "#90DDBF"
+    },
+    {
+      "name": "card_control_connected_foreground",
+      "value": "#103D35"
+    }
+  ]
+}

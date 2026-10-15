@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.5.0)
+project(hongflowbridge)
+set(CMAKE_CXX_STANDARD 17)
+add_library(hongflowbridge SHARED napi_bridge.cpp)
+target_link_libraries(hongflowbridge PUBLIC libace_napi.z.so libhilog_ndk.z.so dl)
+target_compile_options(hongflowbridge PRIVATE -Wall -Wextra -Werror -Wno-error=unused-command-line-argument)

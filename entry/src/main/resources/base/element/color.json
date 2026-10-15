@@ -1,0 +1,24 @@
+{
+  "color": [
+    {
+      "name": "primary_action_background",
+      "value": "#0057D9"
+    },
+    {
+      "name": "primary_action_foreground",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "status_warning",
+      "value": "#B3261E"
+    },
+    {
+      "name": "status_positive",
+      "value": "#216E22"
+    },
+    {
+      "name": "start_window_background",
+      "value": "$ohos:color:background_secondary"
+    }
+  ]
+}

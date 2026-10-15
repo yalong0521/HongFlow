@@ -1,0 +1,577 @@
+[
+  {
+    "title": "鸿流",
+    "detail": "GNU GPL 第 3 版",
+    "file": "hongflow.txt"
+  },
+  {
+    "title": "网络内核 · Mihomo",
+    "detail": "固定提交 8597778c7df410ebe88c57e59eaab32d203156df",
+    "file": "mihomo.txt"
+  },
+  {
+    "title": "Go 运行时",
+    "detail": "Go Authors · BSD 许可",
+    "file": "golang.txt"
+  },
+  {
+    "title": "根证书数据",
+    "detail": "Mozilla 根证书库 · MPL-2.0",
+    "file": "mozilla-ca.txt"
+  },
+  {
+    "title": "规则数据来源",
+    "detail": "Geo 数据来源与许可说明",
+    "file": "geodata.txt"
+  },
+  {
+    "title": "github.com/RyuaNerin/go-krypto",
+    "detail": "v1.3.0",
+    "file": "network-001.txt"
+  },
+  {
+    "title": "github.com/Yawning/aez",
+    "detail": "v0.0.0-20211027044916-e49e68abd344",
+    "file": "network-002.txt"
+  },
+  {
+    "title": "github.com/ajg/form",
+    "detail": "v1.7.1",
+    "file": "network-003.txt"
+  },
+  {
+    "title": "github.com/andybalholm/brotli",
+    "detail": "v1.1.1",
+    "file": "network-004.txt"
+  },
+  {
+    "title": "github.com/bahlo/generic-list-go",
+    "detail": "v0.2.0",
+    "file": "network-005.txt"
+  },
+  {
+    "title": "github.com/bodgit/plumbing",
+    "detail": "v1.3.0",
+    "file": "network-006.txt"
+  },
+  {
+    "title": "github.com/bodgit/windows",
+    "detail": "v1.0.1",
+    "file": "network-007.txt"
+  },
+  {
+    "title": "github.com/coreos/go-iptables",
+    "detail": "v0.8.0",
+    "file": "network-008.txt"
+  },
+  {
+    "title": "github.com/dlclark/regexp2",
+    "detail": "v1.12.0",
+    "file": "network-009.txt"
+  },
+  {
+    "title": "github.com/dunglas/httpsfv",
+    "detail": "v1.0.2",
+    "file": "network-010.txt"
+  },
+  {
+    "title": "github.com/easytier/easytier/easytier-go",
+    "detail": "v0.0.0-20260910071355-3d0c9c3ca5e2",
+    "file": "network-011.txt"
+  },
+  {
+    "title": "github.com/enfein/mieru/v3",
+    "detail": "v3.38.0",
+    "file": "network-012.txt"
+  },
+  {
+    "title": "github.com/ericlagergren/aegis",
+    "detail": "v0.0.0-20250325060835-cd0defd64358",
+    "file": "network-013.txt"
+  },
+  {
+    "title": "github.com/ericlagergren/polyval",
+    "detail": "v0.0.0-20220411101811-e25bc10ba391",
+    "file": "network-014.txt"
+  },
+  {
+    "title": "github.com/ericlagergren/siv",
+    "detail": "v0.0.0-20220507050439-0b757b3aa5f1",
+    "file": "network-015.txt"
+  },
+  {
+    "title": "github.com/ericlagergren/subtle",
+    "detail": "v0.0.0-20220507045147-890d697da010",
+    "file": "network-016.txt"
+  },
+  {
+    "title": "github.com/fsnotify/fsnotify",
+    "detail": "v1.9.0",
+    "file": "network-017.txt"
+  },
+  {
+    "title": "github.com/gaukas/godicttls",
+    "detail": "v0.0.4",
+    "file": "network-018.txt"
+  },
+  {
+    "title": "github.com/gobwas/httphead",
+    "detail": "v0.1.0",
+    "file": "network-019.txt"
+  },
+  {
+    "title": "github.com/gobwas/pool",
+    "detail": "v0.2.1",
+    "file": "network-020.txt"
+  },
+  {
+    "title": "github.com/gobwas/ws",
+    "detail": "v1.4.0",
+    "file": "network-021.txt"
+  },
+  {
+    "title": "github.com/gofrs/uuid/v5",
+    "detail": "v5.4.0",
+    "file": "network-022.txt"
+  },
+  {
+    "title": "github.com/golang/snappy",
+    "detail": "v1.0.0",
+    "file": "network-023.txt"
+  },
+  {
+    "title": "github.com/google/btree",
+    "detail": "v1.1.3",
+    "file": "network-024.txt"
+  },
+  {
+    "title": "github.com/google/pprof",
+    "detail": "v0.0.0-20240727154555-813a5fbdbec8",
+    "file": "network-025.txt"
+  },
+  {
+    "title": "github.com/hashicorp/golang-lru/v2",
+    "detail": "v2.0.7",
+    "file": "network-026.txt"
+  },
+  {
+    "title": "github.com/insomniacslk/dhcp",
+    "detail": "v0.0.0-20250109001534-8abf58130905",
+    "file": "network-027.txt"
+  },
+  {
+    "title": "github.com/josharian/native",
+    "detail": "v1.1.0",
+    "file": "network-028.txt"
+  },
+  {
+    "title": "github.com/klauspost/compress",
+    "detail": "v1.17.9",
+    "file": "network-029.txt"
+  },
+  {
+    "title": "github.com/klauspost/cpuid/v2",
+    "detail": "v2.2.6",
+    "file": "network-030.txt"
+  },
+  {
+    "title": "github.com/klauspost/reedsolomon",
+    "detail": "v1.12.3",
+    "file": "network-031.txt"
+  },
+  {
+    "title": "github.com/mdlayher/netlink",
+    "detail": "v1.7.2",
+    "file": "network-032.txt"
+  },
+  {
+    "title": "github.com/mdlayher/socket",
+    "detail": "v0.5.1",
+    "file": "network-033.txt"
+  },
+  {
+    "title": "github.com/metacubex/age",
+    "detail": "v0.0.0-20260603010618-28d156b4ea78",
+    "file": "network-034.txt"
+  },
+  {
+    "title": "github.com/metacubex/amneziawg-go",
+    "detail": "v0.0.0-20260908071407-0c1c6f40ecd7",
+    "file": "network-035.txt"
+  },
+  {
+    "title": "github.com/metacubex/ascon",
+    "detail": "v0.1.0",
+    "file": "network-036.txt"
+  },
+  {
+    "title": "github.com/metacubex/bart",
+    "detail": "v0.29.0",
+    "file": "network-037.txt"
+  },
+  {
+    "title": "github.com/metacubex/bbolt",
+    "detail": "v0.0.0-20260706163408-d4ec34ad7c48",
+    "file": "network-038.txt"
+  },
+  {
+    "title": "github.com/metacubex/blake3",
+    "detail": "v0.1.0",
+    "file": "network-039.txt"
+  },
+  {
+    "title": "github.com/metacubex/chacha",
+    "detail": "v0.1.5",
+    "file": "network-040.txt"
+  },
+  {
+    "title": "github.com/metacubex/chi",
+    "detail": "v0.1.1",
+    "file": "network-041.txt"
+  },
+  {
+    "title": "github.com/metacubex/connect-ip-go",
+    "detail": "v0.0.0-20260727083417-67ccdb0cf771",
+    "file": "network-042.txt"
+  },
+  {
+    "title": "github.com/metacubex/cpu",
+    "detail": "v0.1.2",
+    "file": "network-043.txt"
+  },
+  {
+    "title": "github.com/metacubex/edwards25519",
+    "detail": "v1.2.0",
+    "file": "network-044.txt"
+  },
+  {
+    "title": "github.com/metacubex/fswatch",
+    "detail": "v0.1.1",
+    "file": "network-045.txt"
+  },
+  {
+    "title": "github.com/metacubex/gopacket",
+    "detail": "v1.1.20-0.20230608035415-7e2f98a3e759",
+    "file": "network-046.txt"
+  },
+  {
+    "title": "github.com/metacubex/hkdf",
+    "detail": "v0.1.0",
+    "file": "network-047.txt"
+  },
+  {
+    "title": "github.com/metacubex/hpke",
+    "detail": "v0.1.0",
+    "file": "network-048.txt"
+  },
+  {
+    "title": "github.com/metacubex/http",
+    "detail": "v0.1.8",
+    "file": "network-049.txt"
+  },
+  {
+    "title": "github.com/metacubex/jls-quic-go",
+    "detail": "v0.0.0-20260727080412-732f2fc9a34d",
+    "file": "network-050.txt"
+  },
+  {
+    "title": "github.com/metacubex/jls-tls",
+    "detail": "v0.0.0-20260723084315-67adc0e2f796",
+    "file": "network-051.txt"
+  },
+  {
+    "title": "github.com/metacubex/kcp-go",
+    "detail": "v0.0.0-20260105040817-550693377604",
+    "file": "network-052.txt"
+  },
+  {
+    "title": "github.com/metacubex/mhurl",
+    "detail": "v0.1.0",
+    "file": "network-053.txt"
+  },
+  {
+    "title": "github.com/metacubex/mipstack",
+    "detail": "v0.0.0-20260930071539-961d4b1c1983",
+    "file": "network-054.txt"
+  },
+  {
+    "title": "github.com/metacubex/mlkem",
+    "detail": "v0.1.0",
+    "file": "network-055.txt"
+  },
+  {
+    "title": "github.com/metacubex/nftables",
+    "detail": "v0.0.0-20260426003805-208c2c1ba2cb",
+    "file": "network-056.txt"
+  },
+  {
+    "title": "github.com/metacubex/qpack",
+    "detail": "v0.6.0",
+    "file": "network-057.txt"
+  },
+  {
+    "title": "github.com/metacubex/quic-go",
+    "detail": "v0.61.1-0.20260727080200-2548683b76f4",
+    "file": "network-058.txt"
+  },
+  {
+    "title": "github.com/metacubex/randv2",
+    "detail": "v0.2.0",
+    "file": "network-059.txt"
+  },
+  {
+    "title": "github.com/metacubex/restls-client-go",
+    "detail": "v0.1.9",
+    "file": "network-060.txt"
+  },
+  {
+    "title": "github.com/metacubex/sevenzip",
+    "detail": "v1.6.4",
+    "file": "network-061.txt"
+  },
+  {
+    "title": "github.com/metacubex/sing",
+    "detail": "v0.5.8",
+    "file": "network-062.txt"
+  },
+  {
+    "title": "github.com/metacubex/sing-mux",
+    "detail": "v0.3.12",
+    "file": "network-063.txt"
+  },
+  {
+    "title": "github.com/metacubex/sing-quic",
+    "detail": "v0.0.0-20260904234848-1c242664697a",
+    "file": "network-064.txt"
+  },
+  {
+    "title": "github.com/metacubex/sing-shadowsocks",
+    "detail": "v0.2.13",
+    "file": "network-065.txt"
+  },
+  {
+    "title": "github.com/metacubex/sing-shadowsocks2",
+    "detail": "v0.2.8",
+    "file": "network-066.txt"
+  },
+  {
+    "title": "github.com/metacubex/sing-tun",
+    "detail": "v0.4.27",
+    "file": "network-067.txt"
+  },
+  {
+    "title": "github.com/metacubex/sing-vmess",
+    "detail": "v0.2.5",
+    "file": "network-068.txt"
+  },
+  {
+    "title": "github.com/metacubex/sing-wireguard",
+    "detail": "v0.0.0-20260826105301-c3ae17d19f9e",
+    "file": "network-069.txt"
+  },
+  {
+    "title": "github.com/metacubex/smux",
+    "detail": "v0.0.0-20260105030934-d0c8756d3141",
+    "file": "network-070.txt"
+  },
+  {
+    "title": "github.com/metacubex/ssh",
+    "detail": "v0.1.0",
+    "file": "network-071.txt"
+  },
+  {
+    "title": "github.com/metacubex/tfo-go",
+    "detail": "v0.0.0-20260623020846-376a77860b8c",
+    "file": "network-072.txt"
+  },
+  {
+    "title": "github.com/metacubex/tls",
+    "detail": "v0.1.8",
+    "file": "network-073.txt"
+  },
+  {
+    "title": "github.com/metacubex/utls",
+    "detail": "v1.8.8",
+    "file": "network-074.txt"
+  },
+  {
+    "title": "github.com/metacubex/wazero",
+    "detail": "v0.0.0-20260628025728-9ae6bdcf2a7d",
+    "file": "network-075.txt"
+  },
+  {
+    "title": "github.com/metacubex/wireguard-go",
+    "detail": "v0.0.0-20250820062549-a6cecdd7f57f",
+    "file": "network-076.txt"
+  },
+  {
+    "title": "github.com/metacubex/yamux",
+    "detail": "v0.0.0-20250918083631-dd5f17c0be49",
+    "file": "network-077.txt"
+  },
+  {
+    "title": "github.com/metacubex/zerotier-go",
+    "detail": "v0.0.0-20260813124750-13fa6f45da5f",
+    "file": "network-078.txt"
+  },
+  {
+    "title": "github.com/miekg/dns",
+    "detail": "v1.1.63",
+    "file": "network-079.txt"
+  },
+  {
+    "title": "github.com/mroth/weightedrand/v2",
+    "detail": "v2.1.0",
+    "file": "network-080.txt"
+  },
+  {
+    "title": "github.com/oasisprotocol/deoxysii",
+    "detail": "v0.0.0-20220228165953-2091330c22b7",
+    "file": "network-081.txt"
+  },
+  {
+    "title": "github.com/openacid/low",
+    "detail": "v0.1.21",
+    "file": "network-082.txt"
+  },
+  {
+    "title": "github.com/oschwald/maxminddb-golang",
+    "detail": "v1.12.0",
+    "file": "network-083.txt"
+  },
+  {
+    "title": "github.com/pierrec/lz4/v4",
+    "detail": "v4.1.27",
+    "file": "network-084.txt"
+  },
+  {
+    "title": "github.com/rasky/go-lzo",
+    "detail": "v0.0.0-20200203143853-96a758eda86e",
+    "file": "network-085.txt"
+  },
+  {
+    "title": "github.com/sagernet/netlink",
+    "detail": "v0.0.0-20240612041022-b9a21c07ac6a",
+    "file": "network-086.txt"
+  },
+  {
+    "title": "github.com/samber/lo",
+    "detail": "v1.53.0",
+    "file": "network-087.txt"
+  },
+  {
+    "title": "github.com/sina-ghaderi/poly1305",
+    "detail": "v0.0.0-20220724002748-c5926b03988b",
+    "file": "network-088.txt"
+  },
+  {
+    "title": "github.com/sina-ghaderi/rabaead",
+    "detail": "v0.0.0-20220730151906-ab6e06b96e8c",
+    "file": "network-089.txt"
+  },
+  {
+    "title": "github.com/sina-ghaderi/rabbitio",
+    "detail": "v0.0.0-20220730151941-9ce26f4f872e",
+    "file": "network-090.txt"
+  },
+  {
+    "title": "github.com/sirupsen/logrus",
+    "detail": "v1.9.4",
+    "file": "network-091.txt"
+  },
+  {
+    "title": "github.com/stangelandcl/ppmd",
+    "detail": "v0.1.1",
+    "file": "network-092.txt"
+  },
+  {
+    "title": "github.com/u-root/uio",
+    "detail": "v0.0.0-20230220225925-ffce2a382923",
+    "file": "network-093.txt"
+  },
+  {
+    "title": "github.com/ulikunitz/xz",
+    "detail": "v0.5.15",
+    "file": "network-094.txt"
+  },
+  {
+    "title": "github.com/vishvananda/netns",
+    "detail": "v0.0.5",
+    "file": "network-095.txt"
+  },
+  {
+    "title": "github.com/vmihailenco/msgpack/v5",
+    "detail": "v5.4.1",
+    "file": "network-096.txt"
+  },
+  {
+    "title": "github.com/vmihailenco/tagparser/v2",
+    "detail": "v2.0.0",
+    "file": "network-097.txt"
+  },
+  {
+    "title": "github.com/yosida95/uritemplate/v3",
+    "detail": "v3.0.2",
+    "file": "network-098.txt"
+  },
+  {
+    "title": "gitlab.com/go-extension/aes-ccm",
+    "detail": "v0.0.0-20230221065045-e58665ef23c7",
+    "file": "network-099.txt"
+  },
+  {
+    "title": "gitlab.com/yawning/bsaes.git",
+    "detail": "v0.0.0-20190805113838-0a714cd429ec",
+    "file": "network-100.txt"
+  },
+  {
+    "title": "go.yaml.in/yaml/v3",
+    "detail": "v3.0.5",
+    "file": "network-101.txt"
+  },
+  {
+    "title": "go4.org/netipx",
+    "detail": "v0.0.0-20260823151212-3075585bcbeb",
+    "file": "network-102.txt"
+  },
+  {
+    "title": "golang.org/x/crypto",
+    "detail": "v0.33.0",
+    "file": "network-103.txt"
+  },
+  {
+    "title": "golang.org/x/exp",
+    "detail": "v0.0.0-20240904232852-e7e105dedf7e",
+    "file": "network-104.txt"
+  },
+  {
+    "title": "golang.org/x/net",
+    "detail": "v0.35.0",
+    "file": "network-105.txt"
+  },
+  {
+    "title": "golang.org/x/sync",
+    "detail": "v0.11.0",
+    "file": "network-106.txt"
+  },
+  {
+    "title": "golang.org/x/sys",
+    "detail": "v0.30.0",
+    "file": "network-107.txt"
+  },
+  {
+    "title": "golang.org/x/text",
+    "detail": "v0.22.0",
+    "file": "network-108.txt"
+  },
+  {
+    "title": "golang.org/x/time",
+    "detail": "v0.10.0",
+    "file": "network-109.txt"
+  },
+  {
+    "title": "google.golang.org/protobuf",
+    "detail": "v1.34.2",
+    "file": "network-110.txt"
+  }
+]

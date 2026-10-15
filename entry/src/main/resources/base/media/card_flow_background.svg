@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="60" viewBox="0 0 160 60" preserveAspectRatio="none">
+    <defs>
+        <linearGradient id="paper" x1="0" y1="0" x2="160" y2="60" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#F7F4EC"/>
+            <stop offset="0.6" stop-color="#EAF0F4"/>
+            <stop offset="1" stop-color="#D2E2ED"/>
+        </linearGradient>
+        <linearGradient id="bank" x1="101" y1="0" x2="139" y2="60" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#A4C8DE"/>
+            <stop offset="1" stop-color="#678EBF"/>
+        </linearGradient>
+        <linearGradient id="current" x1="111" y1="0" x2="157" y2="60" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#204D82"/>
+            <stop offset="0.5" stop-color="#267DA7"/>
+            <stop offset="1" stop-color="#35559B"/>
+        </linearGradient>
+    </defs>
+    <path fill="url(#paper)" d="M0 0H160V60H0Z"/>
+    <path fill="url(#bank)" d="M99-8C130 6 132 20 109 34C93 44 87 54 92 68H168V-8Z"/>
+    <path fill="url(#current)" d="M115-8C145 8 142 21 121 35C108 44 103 55 110 68H168V-8Z"/>
+    <path fill="none" stroke="#D1E5F1" stroke-width="0.6" stroke-opacity="0.7"
+          d="M107-6C137 10 137 22 115 36C101 45 97 55 103 66"/>
+</svg>

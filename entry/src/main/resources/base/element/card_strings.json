@@ -1,0 +1,20 @@
+{
+  "string": [
+    {
+      "name": "card_title",
+      "value": "鸿流"
+    },
+    {
+      "name": "card_display_name",
+      "value": "鸿流开关"
+    },
+    {
+      "name": "card_description",
+      "value": "右侧按钮连接或断开，点击文字区打开鸿流"
+    },
+    {
+      "name": "card_add_configuration",
+      "value": "添加配置"
+    }
+  ]
+}

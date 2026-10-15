@@ -1,0 +1,20 @@
+{
+  "color": [
+    {
+      "name": "primary_action_background",
+      "value": "#0057D9"
+    },
+    {
+      "name": "primary_action_foreground",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "status_warning",
+      "value": "#FF8A78"
+    },
+    {
+      "name": "status_positive",
+      "value": "#8DD68D"
+    }
+  ]
+}

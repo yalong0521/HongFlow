@@ -1,0 +1,13 @@
+diff --git a/hub/executor/executor.go b/hub/executor/executor.go
+index dc7c66b..ee9e8b2 100644
+--- a/hub/executor/executor.go
++++ b/hub/executor/executor.go
+@@ -353,6 +353,8 @@ func loadProvider[T P.Provider](providers map[string]T) {
+ 			load(pv)
+ 		}()
+ 	}
++	// HongFlow publishes connected only after initial provider resources are ready.
++	wg.Wait()
+ }
+ 
+ func updateSniffer(snifferConfig *sniffer.Config) {

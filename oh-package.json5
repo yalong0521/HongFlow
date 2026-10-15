@@ -1,0 +1,9 @@
+{
+  "modelVersion": "5.1.0",
+  "name": "hongflow",
+  "version": "0.1.0",
+  "description": "原生鸿蒙 VPN 客户端",
+  "license": "GPL-3.0-only",
+  "dependencies": {},
+  "devDependencies": {}
+}

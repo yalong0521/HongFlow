@@ -1,0 +1,26 @@
+{
+  // 复制为 build-profile.local.json5，填入 DevEco Studio 生成的本机签名材料。
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "local",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "./signing/development.cer",
+          "profile": "./signing/development.p7b",
+          "storeFile": "./signing/development.p12",
+          "keyAlias": "your-key-alias",
+          "keyPassword": "your-local-key-password",
+          "storePassword": "your-local-store-password",
+          "signAlg": "SHA256withECDSA"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "local"
+      }
+    ]
+  }
+}

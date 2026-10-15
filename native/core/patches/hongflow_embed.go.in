@@ -1,0 +1,35 @@
+// HongFlow integration: keep controller socket ownership in the native host.
+package route
+
+import (
+	"encoding/json"
+
+	"github.com/metacubex/http"
+	"github.com/metacubex/mihomo/tunnel"
+)
+
+// NewEmbeddedHandler retains Mihomo's authenticated APIs and adds only safe mode
+// switching. Embedded mode intentionally disables replacing configs or TUN routes.
+func NewEmbeddedHandler(secret string) http.Handler {
+	SetEmbedMode(true)
+	mux := router(false, secret, "", Cors{AllowOrigins: []string{}})
+	mode := authentication(secret)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload := struct {
+			Mode string `json:"mode"`
+		}{}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&payload); err != nil {
+			http.Error(w, "invalid mode request", http.StatusBadRequest)
+			return
+		}
+		value, ok := tunnel.ModeMapping[payload.Mode]
+		if !ok {
+			http.Error(w, "invalid mode", http.StatusBadRequest)
+			return
+		}
+		tunnel.SetMode(value)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	mux.Method(http.MethodPatch, "/configs", mode)
+	mux.Method(http.MethodPatch, "/configs/", mode)
+	return mux
+}

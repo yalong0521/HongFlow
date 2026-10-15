@@ -1,0 +1,362 @@
+diff --git a/adapter/outboundgroup/parser.go b/adapter/outboundgroup/parser.go
+index e97f8da..2b88aae 100644
+--- a/adapter/outboundgroup/parser.go
++++ b/adapter/outboundgroup/parser.go
+@@ -7,6 +7,8 @@ import (
+ 
+ 	"github.com/dlclark/regexp2"
+ 
++	"github.com/metacubex/mihomo/adapter"
++	"github.com/metacubex/mihomo/adapter/outbound"
+ 	"github.com/metacubex/mihomo/adapter/provider"
+ 	"github.com/metacubex/mihomo/common/structure"
+ 	"github.com/metacubex/mihomo/common/utils"
+@@ -45,45 +47,40 @@ type GroupCommonOption struct {
+ 	Icon                string   `group:"icon,omitempty"`
+ }
+ 
+-func ParseProxyGroup(config map[string]any, proxyMap map[string]C.Proxy, providersMap map[string]P.ProxyProvider, AllProxies []string, AllProviders []string) (ProxyGroup, error) {
++func parseGroupCommonOption(config map[string]any) (GroupCommonOption, error) {
+ 	decoder := structure.NewDecoder(structure.Option{TagName: "group", WeaklyTypedInput: true})
+ 
+ 	groupOption := GroupCommonOption{
+ 		Lazy: true,
+ 	}
+ 	if err := decoder.Decode(config, &groupOption); err != nil {
+-		return nil, errFormat
++		return groupOption, errFormat
+ 	}
+ 
+ 	if groupOption.Type == "" || groupOption.Name == "" {
+-		return nil, errFormat
++		return groupOption, errFormat
+ 	}
+ 
+-	if _, ok := config["routing-mark"]; ok {
+-		log.Errorln("The group [%s] with routing-mark configuration was removed, please set it directly on the proxy instead", groupOption.Name)
+-	}
+-	if _, ok := config["interface-name"]; ok {
+-		log.Errorln("The group [%s] with interface-name configuration was removed, please set it directly on the proxy instead", groupOption.Name)
++	if _, err := utils.NewUnsignedRanges[uint16](groupOption.ExpectedStatus); err != nil {
++		return groupOption, fmt.Errorf("%s: %w", groupOption.Name, err)
+ 	}
+-	if _, ok := config["dialer-proxy"]; ok {
+-		log.Errorln("The group [%s] with dialer-proxy configuration is not allowed, please set it directly on the proxy instead", groupOption.Name)
++	// Constructors use MustCompile; reject invalid expressions before reaching them.
++	for _, filters := range []string{groupOption.Filter, groupOption.ExcludeFilter} {
++		for _, expression := range strings.Split(filters, "`") {
++			if _, err := regexp2.Compile(expression, regexp2.None); err != nil {
++				return groupOption, fmt.Errorf("%s: invalid filter: %w", groupOption.Name, err)
++			}
++		}
+ 	}
+-
+-	groupName := groupOption.Name
+-
+ 	if groupOption.EmptyFallback == "" {
+ 		groupOption.EmptyFallback = "COMPATIBLE"
+ 	}
+-	emptyFallback, ok := proxyMap[groupOption.EmptyFallback]
+-	if !ok {
+-		return nil, fmt.Errorf("%s: empty fallback proxy '%s' not found", groupName, groupOption.EmptyFallback)
+-	}
+-	if _, ok := emptyFallback.Adapter().(ProxyGroup); ok { // strictly forbidden to fill in a proxy group for empty-fallback
+-		return nil, fmt.Errorf("%s: empty fallback proxy '%s' not found", groupName, groupOption.EmptyFallback)
+-	}
+-
+-	providers := []P.ProxyProvider{}
++	return groupOption, nil
++}
+ 
++// expandGroupSources is shared with static validation so filters and fallback
++// insertion determine the same provider-name ownership at import and startup.
++func expandGroupSources(groupOption *GroupCommonOption, AllProxies, AllProviders []string) {
+ 	if groupOption.IncludeAll {
+ 		groupOption.IncludeAllProviders = true
+ 		groupOption.IncludeAllProxies = true
+@@ -113,6 +110,57 @@ func ParseProxyGroup(config map[string]any, proxyMap map[string]C.Proxy, provide
+ 			groupOption.Proxies = []string{groupOption.EmptyFallback}
+ 		}
+ 	}
++}
++
++// ValidateProxyGroup checks the runtime schema and type-specific options without
++// attaching providers or running health checks. The group constructors only
++// allocate local state; provider lifecycle begins separately in Initial/use.
++func ValidateProxyGroup(config map[string]any, AllProxies, AllProviders []string) (GroupCommonOption, error) {
++	option, err := parseGroupCommonOption(config)
++	if err != nil {
++		return option, err
++	}
++	expandGroupSources(&option, AllProxies, AllProviders)
++	if len(option.Proxies) == 0 && len(option.Use) == 0 {
++		return option, fmt.Errorf("%s: %w", option.Name, errMissProxy)
++	}
++	fallback := adapter.NewProxy(outbound.NewBase(outbound.BaseOption{Name: "COMPATIBLE", Type: C.Compatible}))
++	group, err := newProxyGroup(config, option, fallback, nil)
++	if err == nil {
++		_ = group.Close()
++	}
++	return option, err
++}
++
++func ParseProxyGroup(config map[string]any, proxyMap map[string]C.Proxy, providersMap map[string]P.ProxyProvider, AllProxies []string, AllProviders []string) (ProxyGroup, error) {
++	groupOption, err := parseGroupCommonOption(config)
++	if err != nil {
++		return nil, err
++	}
++
++	if _, ok := config["routing-mark"]; ok {
++		log.Errorln("The group [%s] with routing-mark configuration was removed, please set it directly on the proxy instead", groupOption.Name)
++	}
++	if _, ok := config["interface-name"]; ok {
++		log.Errorln("The group [%s] with interface-name configuration was removed, please set it directly on the proxy instead", groupOption.Name)
++	}
++	if _, ok := config["dialer-proxy"]; ok {
++		log.Errorln("The group [%s] with dialer-proxy configuration is not allowed, please set it directly on the proxy instead", groupOption.Name)
++	}
++
++	groupName := groupOption.Name
++
++	emptyFallback, ok := proxyMap[groupOption.EmptyFallback]
++	if !ok {
++		return nil, fmt.Errorf("%s: empty fallback proxy '%s' not found", groupName, groupOption.EmptyFallback)
++	}
++	if _, ok := emptyFallback.Adapter().(ProxyGroup); ok { // strictly forbidden to fill in a proxy group for empty-fallback
++		return nil, fmt.Errorf("%s: empty fallback proxy '%s' not found", groupName, groupOption.EmptyFallback)
++	}
++
++	providers := []P.ProxyProvider{}
++
++	expandGroupSources(&groupOption, AllProxies, AllProviders)
+ 
+ 	if len(groupOption.Proxies) == 0 && len(groupOption.Use) == 0 {
+ 		return nil, fmt.Errorf("%s: %w", groupName, errMissProxy)
+@@ -184,6 +232,12 @@ func ParseProxyGroup(config map[string]any, proxyMap map[string]C.Proxy, provide
+ 		providersMap[groupName] = pd
+ 	}
+ 
++	return newProxyGroup(config, groupOption, emptyFallback, providers)
++}
++
++func newProxyGroup(config map[string]any, groupOption GroupCommonOption, emptyFallback C.Proxy, providers []P.ProxyProvider) (ProxyGroup, error) {
++	decoder := structure.NewDecoder(structure.Option{TagName: "group", WeaklyTypedInput: true})
++	var err error
+ 	switch groupOption.Type {
+ 	case "url-test":
+ 		opt := URLTestOption{}
+@@ -214,7 +268,7 @@ func ParseProxyGroup(config map[string]any, proxyMap map[string]C.Proxy, provide
+ 		}
+ 		return NewLoadBalance(groupOption, opt, emptyFallback, providers)
+ 	case "relay":
+-		return nil, fmt.Errorf("%w: The group [%s] with relay type was removed, please using dialer-proxy instead", errType, groupName)
++		return nil, fmt.Errorf("%w: The group [%s] with relay type was removed, please using dialer-proxy instead", errType, groupOption.Name)
+ 	default:
+ 		return nil, fmt.Errorf("%w: %s", errType, groupOption.Type)
+ 	}
+diff --git a/adapter/provider/parser.go b/adapter/provider/parser.go
+index 5d01793..65c4adc 100644
+--- a/adapter/provider/parser.go
++++ b/adapter/provider/parser.go
+@@ -44,7 +44,7 @@ type proxyProviderSchema struct {
+ 	Header      map[string][]string `provider:"header,omitempty"`
+ }
+ 
+-func ParseProxyProvider(name string, mapping map[string]any, tunnel C.Tunnel) (P.ProxyProvider, error) {
++func parseProxyProviderSchema(mapping map[string]any) (*proxyProviderSchema, error) {
+ 	decoder := structure.NewDecoder(structure.Option{TagName: "provider", WeaklyTypedInput: true})
+ 
+ 	schema := &proxyProviderSchema{
+@@ -56,6 +56,34 @@ func ParseProxyProvider(name string, mapping map[string]any, tunnel C.Tunnel) (P
+ 		return nil, err
+ 	}
+ 
++	return schema, nil
++}
++
++// ValidateProxyProvider checks the same local schema without constructing nodes,
++// opening files or starting a provider's network/health-check lifecycle.
++func ValidateProxyProvider(name string, mapping map[string]any) error {
++	schema, err := parseProxyProviderSchema(mapping)
++	if err != nil {
++		return err
++	}
++	switch schema.Type {
++	case "http", "file", "inline":
++	default:
++		return fmt.Errorf("%w: %s", errVehicleType, schema.Type)
++	}
++	if _, err = utils.NewUnsignedRanges[uint16](schema.HealthCheck.ExpectedStatus); err != nil {
++		return err
++	}
++	_, err = NewProxiesParser(name, nil, schema.Filter, schema.ExcludeFilter, schema.ExcludeType, schema.DialerProxy, schema.Override, schema.AgeSecretKey)
++	return err
++}
++
++func ParseProxyProvider(name string, mapping map[string]any, tunnel C.Tunnel) (P.ProxyProvider, error) {
++	schema, err := parseProxyProviderSchema(mapping)
++	if err != nil {
++		return nil, err
++	}
++
+ 	expectedStatus, err := utils.NewUnsignedRanges[uint16](schema.HealthCheck.ExpectedStatus)
+ 	if err != nil {
+ 		return nil, err
+diff --git a/config/hongflow_validate.go b/config/hongflow_validate.go
+new file mode 100644
+index 0000000..e05336a
+--- /dev/null
++++ b/config/hongflow_validate.go
+@@ -0,0 +1,152 @@
++package config
++
++import (
++	"fmt"
++
++	"github.com/metacubex/mihomo/adapter/outboundgroup"
++	"github.com/metacubex/mihomo/adapter/provider"
++	"github.com/metacubex/mihomo/common/structure"
++	C "github.com/metacubex/mihomo/constant"
++	RC "github.com/metacubex/mihomo/rules/common"
++	"github.com/metacubex/mihomo/rules/logic"
++)
++
++// ValidateProfileReferences checks names, local group/provider options and routing
++// references before HongFlow replaces a saved profile. It deliberately does not
++// construct protocol clients, load Geo data, fetch providers or publish global state.
++// Resource availability and protocol-specific rule payloads remain startup checks.
++func ValidateProfileReferences(raw *RawConfig) error {
++	proxies := map[string]bool{
++		"DIRECT": true, "REJECT": true, "REJECT-DROP": true,
++		"COMPATIBLE": true, "PASS": true, "PASS-RULE": true,
++	}
++	var proxyNames, providerNames []string
++	for name := range raw.ProxyProvider {
++		providerNames = append(providerNames, name)
++	}
++	proxyDecoder := structure.NewDecoder(structure.Option{TagName: "proxy", WeaklyTypedInput: true})
++	for index, mapping := range raw.Proxy {
++		identity := struct {
++			Name string `proxy:"name"`
++		}{}
++		if err := proxyDecoder.Decode(mapping, &identity); err != nil {
++			return fmt.Errorf("proxy %d: %w", index, err)
++		}
++		name := identity.Name
++		if name == "" {
++			return fmt.Errorf("proxy %d: missing name", index)
++		}
++		if _, exists := proxies[name]; exists {
++			return fmt.Errorf("proxy %s is the duplicate name", name)
++		}
++		proxies[name] = true
++		proxyNames = append(proxyNames, name)
++	}
++	groups := make([]outboundgroup.GroupCommonOption, len(raw.ProxyGroup))
++	for index, mapping := range raw.ProxyGroup {
++		group, err := outboundgroup.ValidateProxyGroup(mapping, proxyNames, providerNames)
++		if err != nil {
++			return fmt.Errorf("proxy group[%d]: %w", index, err)
++		}
++		groups[index] = group
++		if _, exists := proxies[group.Name]; exists {
++			return fmt.Errorf("proxy group %s: the duplicate name", group.Name)
++		}
++		proxies[group.Name] = false
++	}
++	// The upstream DAG checker sorts its input; validation must not reorder it.
++	if err := proxyGroupsDagSort(append([]map[string]any(nil), raw.ProxyGroup...)); err != nil {
++		return err
++	}
++	for name, mapping := range raw.ProxyProvider {
++		if name == provider.ReservedName {
++			return fmt.Errorf("can not defined a provider called `%s`", name)
++		}
++		if err := provider.ValidateProxyProvider(name, mapping); err != nil {
++			return fmt.Errorf("parse proxy provider %s error: %w", name, err)
++		}
++	}
++	for _, group := range groups {
++		// Only groups with effective proxies create a compatible provider of
++		// their own; a use-only group may legally share a provider's name.
++		if _, exists := raw.ProxyProvider[group.Name]; exists && len(group.Proxies) != 0 {
++			return fmt.Errorf("proxy group %s: duplicate provider name", group.Name)
++		}
++		for _, name := range group.Proxies {
++			if _, exists := proxies[name]; !exists {
++				return fmt.Errorf("proxy group %s: '%s' not found", group.Name, name)
++			}
++		}
++		for _, name := range group.Use {
++			if _, exists := raw.ProxyProvider[name]; !exists {
++				return fmt.Errorf("proxy group %s: provider '%s' not found", group.Name, name)
++			}
++		}
++		if group.EmptyFallback != "" && !proxies[group.EmptyFallback] {
++			return fmt.Errorf("proxy group %s: empty fallback proxy '%s' not found", group.Name, group.EmptyFallback)
++		}
++	}
++	// Mihomo adds GLOBAL when a profile does not define its own group.
++	proxies["GLOBAL"] = false
++	subRules := make(map[string][]C.Rule, len(raw.SubRules))
++	for name := range raw.SubRules {
++		if name == "" {
++			return fmt.Errorf("sub-rule name is empty")
++		}
++		subRules[name] = nil
++	}
++	// Reuse the upstream logical-rule parser to find RULE-SET references nested
++	// inside AND/OR/NOT/SUB-RULE, without constructing Geo or provider matchers.
++	var parseReference RC.ParseRuleFunc
++	parseReference = func(tp, payload, target string, params []string, _ map[string][]C.Rule) (C.Rule, error) {
++		switch tp {
++		case "SUB-RULE":
++			return logic.NewSubRule(payload, target, subRules, parseReference)
++		case "AND":
++			return logic.NewAND(payload, target, parseReference)
++		case "OR":
++			return logic.NewOR(payload, target, parseReference)
++		case "NOT":
++			return logic.NewNOT(payload, target, parseReference)
++		case "RULE-SET":
++			if _, exists := raw.RuleProvider[payload]; !exists {
++				return nil, fmt.Errorf("rule set [%s] not found", payload)
++			}
++		}
++		return RC.NewMatch(target), nil
++	}
++	checkRules := func(lines []string, location string) ([]C.Rule, error) {
++		result := make([]C.Rule, 0, len(lines))
++		for index, line := range lines {
++			tp, payload, target, params := RC.ParseRulePayload(line, true)
++			if target == "" {
++				return nil, fmt.Errorf("%s[%d]: format invalid", location, index)
++			}
++			if tp == "SUB-RULE" {
++				if _, exists := subRules[target]; !exists {
++					return nil, fmt.Errorf("%s[%d]: sub-rule [%s] not found", location, index, target)
++				}
++			} else if _, exists := proxies[target]; !exists {
++				return nil, fmt.Errorf("%s[%d]: proxy [%s] not found", location, index, target)
++			}
++			rule, err := parseReference(tp, payload, target, params, subRules)
++			if err != nil {
++				return nil, fmt.Errorf("%s[%d]: %w", location, index, err)
++			}
++			result = append(result, rule)
++		}
++		return result, nil
++	}
++	for name, lines := range raw.SubRules {
++		parsed, err := checkRules(lines, "sub-rules["+name+"]")
++		if err != nil {
++			return err
++		}
++		subRules[name] = parsed
++	}
++	if err := verifySubRule(subRules); err != nil {
++		return err
++	}
++	_, err := checkRules(raw.Rule, "rules")
++	return err
++}

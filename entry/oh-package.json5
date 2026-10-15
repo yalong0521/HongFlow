@@ -1,0 +1,9 @@
+{
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "HongFlow native application",
+  "license": "GPL-3.0-only",
+  "dependencies": {
+    "libhongflowbridge.so": "file:./src/main/cpp/types/libhongflowbridge"
+  }
+}

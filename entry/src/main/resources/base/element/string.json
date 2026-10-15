@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "原生鸿蒙 VPN"
+    },
+    {
+      "name": "ability_desc",
+      "value": "管理 VPN 连接和订阅"
+    },
+    {
+      "name": "vpn_desc",
+      "value": "VPN 流量转发服务"
+    }
+  ]
+}
