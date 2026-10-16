@@ -55,6 +55,12 @@
     ],
     "extensionAbilities": [
       {
+        "name": "HongFlowSubscriptionAbility",
+        "srcEntry": "./ets/workability/HongFlowSubscriptionAbility.ets",
+        "type": "workScheduler",
+        "exported": false
+      },
+      {
         "name": "HongFlowVpnAbility",
         "srcEntry": "./ets/vpnability/HongFlowVpnAbility.ets",
         "description": "$string:vpn_desc",

@@ -67,6 +67,14 @@ export default class EntryAbility extends UIAbility {
     this.initializeSession();
   }
 
+  onForeground(): void {
+    appSession.ready().then(() => {
+      appSession.model.refreshSubscriptions();
+    }).catch(() => {
+      // 初始化失败由原初始化链报告，不影响窗口恢复。
+    });
+  }
+
   onDestroy(): void {
     this.windowGeneration += 1;
     try {

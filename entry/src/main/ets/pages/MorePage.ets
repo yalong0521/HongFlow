@@ -1,7 +1,7 @@
 import { bundleManager, common } from '@kit.AbilityKit';
 import { util } from '@kit.ArkTS';
 import { MainModel } from '../model/MainModel';
-import { LogLine } from '../model/AppModels';
+import { LogLine, SUBSCRIPTION_UPDATE_HOURS } from '../model/AppModels';
 import { VpnCardService } from '../service/VpnCardService';
 import {
   EmptyState,
@@ -27,6 +27,7 @@ export struct MorePage {
   @Local private showAbout: boolean = false;
   @Local private showPrivacy: boolean = false;
   @Local private showLicenses: boolean = false;
+  @Local private showAutoUpdate: boolean = false;
   @Local private error: string = '';
   @Local private appVersion: string = '版本信息暂不可用';
   @Local private licenseDocuments: LicenseDocument[] = [];
@@ -49,6 +50,20 @@ export struct MorePage {
       VpnCardService.openManager();
     } catch (error) {
       this.error = (error as Error)?.message || '暂时无法打开桌面卡片管理。';
+    }
+  }
+
+  private autoUpdateLabel(): string {
+    return this.model.autoUpdateHours === 0 ? '已关闭' :
+      this.model.autoUpdateHours === 24 ? '每天一次' : '每 ' + this.model.autoUpdateHours + ' 小时';
+  }
+
+  private async changeAutoUpdateHours(index: number): Promise<void> {
+    this.error = '';
+    try {
+      await this.model.setAutoUpdateHours(SUBSCRIPTION_UPDATE_HOURS[index]);
+    } catch (error) {
+      this.error = (error as Error)?.message || '自动更新设置未完成，请重试。';
     }
   }
 
@@ -104,6 +119,27 @@ export struct MorePage {
       }
 
       ListItemGroup({ space: 0 }) {
+        ListItem() {
+          SettingsRow({
+            title: '自动更新订阅',
+            detail: this.autoUpdateLabel() + '，更新在下次连接时生效。',
+            symbol: $r('sys.symbol.arrow_clockwise'),
+            onOpen: () => {
+              this.error = '';
+              this.showAutoUpdate = true;
+            },
+          })
+        }
+        .bindSheet($$this.showAutoUpdate, this.AutoUpdateSheet, {
+          height: SheetSize.FIT_CONTENT,
+          title: { title: '自动更新订阅' },
+          showClose: true,
+          dragBar: this.contentWidth < 600,
+          preferType: this.sheetType(),
+          width: this.contentWidth >= 600 ? 520 : '100%',
+          enableHoverMode: true,
+        })
+
         ListItem() {
           SettingsRow({
             title: '桌面卡片',
@@ -273,6 +309,43 @@ export struct MorePage {
   }
 
   @Builder
+  AutoUpdateSheet() {
+    Column({ space: LayoutTokens.sectionGap }) {
+      Text('自动检查订阅内容，保持当前 VPN 连接。更新后的配置在下次连接时使用。')
+        .fontSize(14)
+        .fontColor(ThemeTokens.textSecondary)
+        .lineHeight(22)
+      Select([{ value: '关闭' }, { value: '每 6 小时' }, { value: '每 12 小时' }, { value: '每天一次' }])
+        .selected(SUBSCRIPTION_UPDATE_HOURS.indexOf(this.model.autoUpdateHours))
+        .value(this.autoUpdateLabel())
+        .enabled(!this.model.autoUpdateSaving)
+        .width('100%')
+        .onSelect((index: number) => {
+          this.changeAutoUpdateHours(index);
+        })
+      Text(this.model.autoUpdateCheckedAt > 0 ? '上次检查：' + formatDate(this.model.autoUpdateCheckedAt) :
+        '尚未进行自动检查')
+        .fontSize(14)
+        .fontColor(ThemeTokens.textSecondary)
+      if (this.error.length > 0 || this.model.autoUpdateError.length > 0) {
+        InlineNotice({ title: '自动更新提示', detail: this.error || this.model.autoUpdateError })
+      }
+      Text('系统可能延后后台检查，打开应用时会补查到期订阅。联网时可能使用移动数据。')
+        .fontSize(13)
+        .fontColor(ThemeTokens.textSecondary)
+        .lineHeight(20)
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding({
+      left: LayoutTokens.pageRegular,
+      right: LayoutTokens.pageRegular,
+      top: LayoutTokens.pageCompact,
+      bottom: LayoutTokens.pageRegular
+    })
+  }
+
+  @Builder
   PrivacySection(title: string, detail: string) {
     Column({ space: 8 }) {
       Text(title)
@@ -297,7 +370,7 @@ export struct MorePage {
         this.PrivacySection('内核缓存与删除',
           '内核会在本机缓存节点提供者和规则数据，其中可能包含节点凭据；使用 Fake-IP 模式时，还会保存域名与合成 IP 的映射。删除配置不会清除这些缓存。若要移除应用在本机保存的全部数据，可通过系统卸载应用；卸载前请备份需要保留的配置。')
         this.PrivacySection('网络访问由你的配置决定',
-          '添加或更新订阅时，应用会访问你填写的地址。连接后，网络流量按照当前配置直连或经所选节点转发；节点、远程规则和配置中的 DNS 服务可能接收相应请求，请使用可信来源。')
+          '添加或更新订阅时，应用会访问你填写的地址。默认每天自动检查订阅，后台与打开应用时均可能联网并使用移动数据，可在设置中调整周期或关闭。自动更新不主动断开当前连接，新配置在下次连接时使用。连接后，网络流量按照当前配置直连或经所选节点转发；节点、远程规则和配置中的 DNS 服务可能接收相应请求，请使用可信来源。')
         this.PrivacySection('DNS 与节点测速',
           '未配置主 DNS 时，默认使用 1.1.1.1 和 223.5.5.5 的 DoH 服务。未配置引导 DNS 时，需要解析 DNS 服务器域名仍会使用这两个地址，即使已指定主 DNS。点击测速会通过对应节点访问 https://www.gstatic.com/generate_204，以计算往返延迟。')
         this.PrivacySection('运行信息与日志',

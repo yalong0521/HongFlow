@@ -73,14 +73,19 @@ function environment() {
   fs.mkdirSync(path.join(workspace, 'work'), { recursive: true });
   const directory = fs.mkdtempSync(path.join(workspace, 'work/card-fixture-'));
   const clock = new Clock();
-  const events = { starts: [], stops: [], queries: 0, publications: [], warnings: [], http: [], windows: [], managers: [] };
-  const form = { items: [], failQueries: 0, failUpdates: 0 };
+  const events = {
+    starts: [], stops: [], queries: 0, publications: [], refreshRequests: [], warnings: [],
+    http: [], httpDestroyed: [], windows: [], managers: [], workStarts: [], workStops: [], workQueries: 0
+  };
+  const form = { items: [], failQueries: 0, failUpdates: 0, failRefreshes: 0 };
+  const scheduler = { works: new Map(), failQueries: 0, failStarts: 0, failStops: 0 };
+  const formRefreshTimers = new Map();
   let activeVpn = false;
   let foreignVpnActive = false;
   let heartbeat;
   let startMode = 'connected';
   let proxies = {};
-  let subscription;
+  const subscriptionResponses = new Map();
   let delayRequest;
   let stopRequest;
   let pickerRequest;
@@ -118,12 +123,19 @@ function environment() {
       };
     }
   }
+  class FormExtensionAbility {
+    constructor() { this.context = context; }
+  }
+  class WorkSchedulerExtensionAbility {
+    constructor() { this.context = context; }
+  }
 
   const fileIo = {
     OpenMode: { CREATE: 1, WRITE_ONLY: 2, READ_ONLY: 4 },
     accessSync: target => fs.existsSync(target),
     mkdirSync: (target, recursive) => fs.mkdirSync(target, { recursive }),
     unlinkSync: target => fs.unlinkSync(target),
+    listFileSync: target => fs.readdirSync(target),
     readTextSync: target => fs.readFileSync(target, 'utf8'),
     readSync: (fd, buffer, options = {}) => fs.readSync(fd, Buffer.from(buffer), 0,
       options.length ?? buffer.byteLength, options.offset ?? null),
@@ -167,8 +179,42 @@ function environment() {
     },
     '@kit.PerformanceAnalysisKit': { hilog: { warn: (...args) => events.warnings.push(args), error() { }, info() { } } },
     '@kit.LocalizationKit': {},
+    '@kit.BackgroundTasksKit': {
+      WorkSchedulerExtensionAbility,
+      workScheduler: {
+        NetworkType: { NETWORK_TYPE_ANY: 0, NETWORK_TYPE_WIFI: 2 },
+        startWork(work) {
+          events.workStarts.push({ ...work });
+          if (scheduler.failStarts-- > 0) throw new Error('Mock work scheduling failure');
+          if (work.isRepeat) assert.ok(work.repeatCycleTime >= 7200000, 'Repeating work must respect the platform minimum');
+          scheduler.works.set(work.workId, { ...work });
+        },
+        stopWork(work, needCancel = false) {
+          events.workStops.push({ work: { ...work }, needCancel });
+          if (scheduler.failStops-- > 0) throw new Error('Mock work cancellation failure');
+          if (needCancel) scheduler.works.delete(work.workId);
+        },
+        async obtainAllWorks() {
+          events.workQueries++;
+          if (scheduler.failQueries-- > 0) throw new Error('Mock work query failure');
+          return [...scheduler.works.values()].map(work => ({ ...work }));
+        },
+        async getWorkStatus(workId) {
+          events.workQueries++;
+          if (scheduler.failQueries-- > 0) throw new Error('Mock work query failure');
+          const work = scheduler.works.get(workId);
+          if (!work) throw Object.assign(new Error('Mock work not found'), { code: 9700004 });
+          return { ...work };
+        }
+      }
+    },
     '@kit.FormKit': {
-      formInfo: { FormDimension: { Dimension_1_2: 1 } },
+      FormExtensionAbility,
+      formInfo: {
+        FormDimension: { Dimension_1_2: 1 },
+        FormParam: { IDENTITY_KEY: 'ohos.extra.param.key.form_identity' },
+        VisibilityType: { FORM_VISIBLE: 1 }, FormState: { READY: 0 }
+      },
       formBindingData: { createFormBindingData: data => ({ data: JSON.stringify(data) }) },
       formProvider: {
         async getPublishedRunningFormInfos() {
@@ -179,6 +225,16 @@ function environment() {
         async updateForm(id, data) {
           if (form.failUpdates-- > 0) throw Object.assign(new Error('Mock update failure'), { code: 16500050 });
           events.publications.push({ id, value: JSON.parse(data.data) });
+        },
+        async setFormNextRefreshTime(id, minutes) {
+          events.refreshRequests.push({ id, minutes });
+          assert.ok(minutes >= 5, 'Form recovery refresh must respect the platform minimum');
+          if (form.failRefreshes-- > 0) throw Object.assign(new Error('Mock refresh scheduling failure'), { code: 16500050 });
+          clock.timers.delete(formRefreshTimers.get(id));
+          formRefreshTimers.set(id, clock.set(() => {
+            formRefreshTimers.delete(id);
+            new HongFlowFormAbility().onUpdateForm(id);
+          }, minutes * 60000));
         },
         openFormManager: want => events.managers.push(want)
       }
@@ -233,27 +289,31 @@ function environment() {
       },
       http: {
         RequestMethod: { GET: 'GET', PUT: 'PUT', DELETE: 'DELETE' }, HttpDataType: { STRING: 0, ARRAY_BUFFER: 1 },
-        createHttp: () => ({
-          async request(url, options) {
-            // Only an explicitly configured synthetic subscription is accepted.
-            // This fixture never sends HTTP requests to any network.
-            if (subscription && url === 'https://fixture.invalid/clash.yaml') {
+        createHttp: () => {
+          let requestUrl;
+          return {
+            async request(url, options) {
+              requestUrl = url;
+              // Only an explicitly configured synthetic subscription is accepted.
+              // This fixture never sends HTTP requests to any network.
+              if (subscriptionResponses.has(url)) {
+                events.http.push(url);
+                return subscriptionResponses.get(url)();
+              }
+              assert.ok(url.startsWith('http://127.0.0.1:9090/'), 'Unexpected external HTTP request');
+              assert.equal(options.header.Authorization, 'Bearer ' + store.readSnapshot().secret);
               events.http.push(url);
-              return subscription.promise;
-            }
-            assert.ok(url.startsWith('http://127.0.0.1:9090/'), 'Unexpected external HTTP request');
-            assert.equal(options.header.Authorization, 'Bearer ' + store.readSnapshot().secret);
-            events.http.push(url);
-            const route = new URL(url).pathname;
-            if (delayRequest && route.endsWith('/delay')) return delayRequest.promise;
-            const payload = route === '/proxies' ? { proxies } :
-              route === '/configs' ? { mode: 'rule' } :
-                route === '/connections' ? { uploadTotal: 0, downloadTotal: 0 } : undefined;
-            assert.ok(payload, 'Unexpected core API route');
-            return { responseCode: 200, result: JSON.stringify(payload) };
-          },
-          destroy() { }
-        })
+              const route = new URL(url).pathname;
+              if (delayRequest && route.endsWith('/delay')) return delayRequest.promise;
+              const payload = route === '/proxies' ? { proxies } :
+                route === '/configs' ? { mode: 'rule' } :
+                  route === '/connections' ? { uploadTotal: 0, downloadTotal: 0 } : undefined;
+              assert.ok(payload, 'Unexpected core API route');
+              return { responseCode: 200, result: JSON.stringify(payload) };
+            },
+            destroy() { events.httpDestroyed.push(requestUrl); }
+          };
+        }
       }
     }
   };
@@ -292,10 +352,12 @@ function environment() {
   const { CardCommandInbox } = load(path.join(sourceRoot, 'service/CardCommandInbox.ets'));
   const { appSession } = load(path.join(sourceRoot, 'service/AppSession.ets'));
   const EntryAbility = load(path.join(sourceRoot, 'entryability/EntryAbility.ets')).default;
+  const HongFlowFormAbility = load(path.join(sourceRoot, 'formability/HongFlowFormAbility.ets')).default;
   store = new FileStore(context);
   const profile = new models.ProfileInfo();
   profile.id = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
   profile.name = 'Synthetic local fixture';
+  profile.updatedAt = clock.now;
   store.writeText(store.profilePath(profile.id), 'proxies: [{name: fixture, type: direct}]\nproxy-groups: []\nrules: [MATCH,DIRECT]');
   store.writeProfiles([profile]);
   const settings = new models.SavedSettings();
@@ -343,16 +405,35 @@ function environment() {
     return request;
   };
   return {
-    model, appSession, initialize, createWindow, cards, card, store, context, clock, events, form, wantFor, offer, entry, seedRun, CardCommandInbox,
+    model, appSession, initialize, createWindow, cards, card, store, context, clock, events, form, scheduler, wantFor, offer, entry, seedRun, CardCommandInbox,
+    formAbility: new HongFlowFormAbility(),
     fileIo, native, network: kits['@kit.NetworkKit'],
     openManager: () => VpnCardService.openManager(),
     setStartMode: mode => { startMode = mode; },
     setForeignVpnActive: value => { foreignVpnActive = value; },
+    simulateProcessDeath() {
+      // A system-owned Form reservation survives; application timers and the TUN do not.
+      // Deliberately skip both Ability onDestroy callbacks and durable state cleanup.
+      activeVpn = false;
+      const retained = new Set(formRefreshTimers.values());
+      for (const id of clock.timers.keys()) {
+        if (!retained.has(id)) clock.timers.delete(id);
+      }
+    },
     setProxies: value => { proxies = value; },
-    holdSubscription: () => { subscription = deferred(); return subscription; },
+    holdSubscription: (url = 'https://fixture.invalid/clash.yaml') => {
+      const subscription = deferred();
+      subscriptionResponses.set(url, () => subscription.promise);
+      return subscription;
+    },
+    respondToSubscription(url, respond) {
+      assert.ok(url.startsWith('https://fixture.invalid/'), 'Only synthetic subscription URLs may be configured');
+      subscriptionResponses.set(url, respond);
+    },
     holdDelay: () => { delayRequest = deferred(); return delayRequest; },
     holdStop: () => { stopRequest = deferred(); return stopRequest; },
     holdPicker: () => { pickerRequest = deferred(); return pickerRequest; },
+    load: relative => load(path.join(sourceRoot, relative)),
     emitCoreLog(data) {
       assert.ok(sockets.length > 0, 'The production model must open its core log socket first');
       sockets.at(-1).emit(data);
@@ -362,6 +443,38 @@ function environment() {
 }
 
 function test(name, callback) { tests.push({ name, callback }); }
+
+const subscriptionUrl = 'https://fixture.invalid/clash.yaml';
+const updatedYaml = 'proxies: [{name: automatically-updated, type: direct}]\nproxy-groups: []\nrules: [MATCH,DIRECT]';
+
+function subscriptionResponse(yaml = updatedYaml) {
+  return { responseCode: 200, result: new TextEncoder().encode(yaml).buffer };
+}
+
+function subscriptionFixture(e) {
+  const profile = e.store.readProfiles()[0];
+  profile.url = subscriptionUrl;
+  profile.revision = crypto.randomUUID();
+  profile.updatedAt = e.clock.now - 25 * 3600000;
+  e.store.writeProfiles([profile]);
+  const settings = e.store.readSettings();
+  settings.autoUpdateHours = 24;
+  settings.autoUpdateRevision = crypto.randomUUID();
+  e.store.writeSettings(settings);
+  const { SubscriptionAutoUpdate } = e.load('service/SubscriptionAutoUpdate.ets');
+  return {
+    profile, path: e.store.profilePath(profile.id), original: e.store.readText(e.store.profilePath(profile.id)),
+    auto: new SubscriptionAutoUpdate(e.context)
+  };
+}
+
+async function downloadCandidate(e, auto, yaml = updatedYaml) {
+  const response = e.holdSubscription();
+  const checking = auto.checkDue();
+  await flush();
+  response.resolve(subscriptionResponse(yaml));
+  await checking;
+}
 
 test('minimal card omits configuration details and the manager requests the 1x2 size', async e => {
   const profile = e.store.readProfiles()[0];
@@ -631,6 +744,179 @@ test('same-state Form IPC failure retries after backoff; new phase retries immed
   assert.equal(e.events.publications.at(-1).value.phase, 'idle');
 });
 
+test('connected heartbeats renew the system recovery refresh each minute without republishing', async e => {
+  e.seedRun('refresh-renewal');
+  e.store.writeSnapshot({ ...e.store.readSnapshot(), tunnelState: 'created', vpnNetId: 107 });
+  e.cards.refresh();
+  await flush();
+  assert.equal(e.events.publications.length, 1);
+  assert.deepEqual(e.events.refreshRequests, [{ id: '1007', minutes: 5 }]);
+  for (let second = 1; second <= 60; second++) {
+    await e.clock.advance(1000);
+    e.store.writeSnapshot(e.store.readSnapshot());
+    e.cards.refresh();
+    await flush();
+    assert.equal(e.events.publications.length, 1, 'A heartbeat cannot republish unchanged display data');
+    assert.equal(e.events.refreshRequests.length, second < 60 ? 1 : 2);
+  }
+  assert.equal(e.events.queries, 2, 'Published cards should only be queried when renewal is due');
+  assert.deepEqual(e.events.refreshRequests.at(-1), { id: '1007', minutes: 5 });
+});
+
+test('starting and stopping cards reserve recovery while inactive or invalid forms do not', async e => {
+  const ownForm = e.form.items[0];
+  e.form.items.push({ ...ownForm, formId: '1008' }, { ...ownForm, bundleName: 'other.bundle' },
+    { ...ownForm, formName: 'OtherForm' }, { ...ownForm, abilityName: 'OtherAbility' });
+  e.seedRun('refresh-starting', false, false, 'starting');
+  e.cards.refresh();
+  await flush();
+  assert.equal(e.events.publications.at(-1).value.phase, 'starting');
+  assert.deepEqual(e.events.refreshRequests, [{ id: '1007', minutes: 5 }]);
+  e.seedRun('refresh-stopping', true, true, 'connected');
+  e.cards.refresh();
+  await flush();
+  assert.equal(e.events.publications.at(-1).value.phase, 'stopping');
+  assert.equal(e.events.refreshRequests.length, 2);
+  for (const phase of ['idle', 'error']) {
+    e.seedRun('refresh-' + phase, true, false, phase);
+    e.cards.refresh();
+    await flush();
+    assert.equal(e.events.publications.at(-1).value.phase, phase);
+    assert.equal(e.events.refreshRequests.length, 2, 'Inactive cards must not extend a recovery reservation');
+  }
+});
+
+test('a newly added active card reserves recovery only after a provider update', async e => {
+  e.seedRun('refresh-new-card');
+  const added = e.formAbility.onAddForm({ parameters: { 'ohos.extra.param.key.form_identity': '1008' } });
+  assert.equal(JSON.parse(added.data).phase, 'connected');
+  assert.equal(e.events.refreshRequests.length, 0, 'onAddForm runs before the card is registered');
+  assert.equal(e.events.publications.length, 0);
+  e.formAbility.onUpdateForm('1008');
+  await flush();
+  assert.equal(e.events.publications.at(-1).id, '1008');
+  assert.equal(e.events.publications.at(-1).value.phase, 'connected');
+  assert.deepEqual(e.events.refreshRequests, [{ id: '1008', minutes: 5 }]);
+});
+
+test('the reserved provider update corrects a killed process card without changing its cleanup ownership', async e => {
+  e.seedRun('refresh-process-death');
+  e.store.writeSnapshot({ ...e.store.readSnapshot(), tunnelState: 'created', vpnNetId: 107 });
+  const requestFile = e.store.readText(e.store.root + '/request.json');
+  const snapshotFile = e.store.readText(e.store.root + '/status.json');
+  e.cards.refresh();
+  await flush();
+  assert.equal(e.events.publications.at(-1).value.phase, 'connected');
+  e.simulateProcessDeath();
+  await e.clock.advance(299999);
+  assert.equal(e.events.publications.length, 1);
+  await e.clock.advance(1);
+  const data = e.events.publications.at(-1).value;
+  assert.equal(e.events.publications.length, 2);
+  assert.equal(data.phase, 'idle');
+  assert.equal(data.statusLabel, '未连接');
+  assert.equal(data.action, 'stop');
+  assert.equal(data.actionLabel, '清理连接');
+  assert.equal(data.requestId, 'refresh-process-death');
+  assert.equal(e.cards.authenticatedCommand(e.wantFor(data)).requestId, 'refresh-process-death');
+  assert.equal(e.events.refreshRequests.length, 1, 'A stale disconnected card must not renew the reservation');
+  assert.equal(e.store.readText(e.store.root + '/request.json'), requestFile);
+  assert.equal(e.store.readText(e.store.root + '/status.json'), snapshotFile);
+  assert.equal(e.events.starts.length, 0);
+  assert.equal(e.events.stops.length, 0);
+});
+
+test('stale connected cards remain abnormal when the owned VPN exists or network inspection fails', async e => {
+  e.seedRun('refresh-unverified-network');
+  e.store.writeSnapshot({ ...e.store.readSnapshot(), tunnelState: 'created', vpnNetId: 107 });
+  await e.clock.advance(7000);
+  e.formAbility.onUpdateForm('1007');
+  await flush();
+  assert.equal(e.events.publications.at(-1).value.phase, 'error');
+  assert.equal(e.events.publications.at(-1).value.action, 'stop');
+  e.simulateProcessDeath();
+  e.network.connection.getAllNetsSync = () => { throw new Error('Mock network inspection failure'); };
+  e.formAbility.onUpdateForm('1007');
+  await flush();
+  assert.equal(e.events.publications.at(-1).value.phase, 'error');
+  assert.equal(e.events.publications.at(-1).value.statusLabel, '连接异常');
+  assert.equal(e.events.refreshRequests.length, 0);
+  assert.equal(e.store.readRequest().cancelled, false);
+});
+
+test('an unrelated VPN cannot preserve a stale connected card with a released owned network', async e => {
+  e.seedRun('refresh-foreign-network');
+  e.store.writeSnapshot({ ...e.store.readSnapshot(), tunnelState: 'created', vpnNetId: 107 });
+  e.simulateProcessDeath();
+  e.setForeignVpnActive(true);
+  await e.clock.advance(7000);
+  e.formAbility.onUpdateForm('1007');
+  await flush();
+  assert.equal(e.events.publications.at(-1).value.phase, 'idle');
+  assert.equal(e.events.publications.at(-1).value.action, 'stop');
+  assert.deepEqual(e.network.connection.getAllNetsSync(), [{ netId: 207 }]);
+  assert.equal(e.events.starts.length, 0);
+  assert.equal(e.events.stops.length, 0);
+});
+
+test('stale snapshot identity mismatches cannot mark a different request as disconnected', async e => {
+  e.seedRun('refresh-identity');
+  const snapshot = { ...e.store.readSnapshot(), tunnelState: 'created', vpnNetId: 107 };
+  e.simulateProcessDeath();
+  for (const mismatch of [
+    { requestId: 'other-request' }, { profileId: 'other-profile' }, { secret: 'other-secret' }
+  ]) {
+    e.store.writeSnapshot({ ...snapshot, ...mismatch });
+    await e.clock.advance(7000);
+    e.formAbility.onUpdateForm('1007');
+    await flush();
+    const data = e.events.publications.at(-1).value;
+    assert.equal(data.phase, 'error');
+    assert.equal(data.action, 'stop');
+    assert.equal(data.requestId, 'refresh-identity');
+    assert.equal(e.store.readRequest().cancelled, false);
+  }
+  assert.equal(e.events.refreshRequests.length, 0);
+});
+
+test('recovery reservation failures retry after backoff without stopping or cancelling the VPN', async e => {
+  e.seedRun('refresh-retry');
+  e.form.failRefreshes = 1;
+  e.cards.refresh();
+  await flush();
+  assert.equal(e.events.publications.at(-1).value.phase, 'connected');
+  assert.equal(e.events.refreshRequests.length, 1);
+  assert.equal(e.events.warnings.length, 1);
+  await e.clock.advance(29000);
+  e.store.writeSnapshot(e.store.readSnapshot());
+  e.cards.refresh();
+  await flush();
+  assert.equal(e.events.refreshRequests.length, 1);
+  await e.clock.advance(1001);
+  e.store.writeSnapshot(e.store.readSnapshot());
+  e.cards.refresh();
+  await flush();
+  assert.equal(e.events.refreshRequests.length, 2);
+  assert.equal(e.events.publications.length, 1, 'Retrying a reservation must not republish successful display data');
+  assert.equal(e.events.publications.at(-1).value.phase, 'connected');
+  assert.equal(e.store.readRequest().cancelled, false);
+  assert.equal(e.store.readSnapshot().phase, 'connected');
+  assert.equal(e.events.starts.length, 0);
+  assert.equal(e.events.stops.length, 0);
+  e.form.failRefreshes = 1;
+  await e.clock.advance(60000);
+  e.store.writeSnapshot(e.store.readSnapshot());
+  e.cards.refresh();
+  await flush();
+  assert.equal(e.events.refreshRequests.length, 3);
+  e.seedRun('refresh-retry-stopping', true, true, 'connected');
+  e.cards.refresh();
+  await flush();
+  assert.equal(e.events.refreshRequests.length, 4, 'A changed phase must bypass a reservation retry delay');
+  assert.equal(e.events.publications.length, 2);
+  assert.equal(e.events.publications.at(-1).value.phase, 'stopping');
+});
+
 test('pending system authorization times out and durably cancels the request', async e => {
   e.setStartMode('pending');
   await e.initialize();
@@ -894,6 +1180,517 @@ test('unknown or mismatched cleanup evidence cannot bypass an active system VPN'
     assert.equal(e.store.readRequest().stopping, true);
     assert.equal(e.model.canModifyProfiles, false);
   }
+});
+
+test('automatic subscription downloads stage validated data until an idle consumer applies it', async e => {
+  const fixture = subscriptionFixture(e);
+  await downloadCandidate(e, fixture.auto);
+  assert.deepEqual(e.events.http, [subscriptionUrl]);
+  assert.equal(e.store.readText(fixture.path), fixture.original);
+  assert.equal(e.store.readProfiles()[0].revision, fixture.profile.revision);
+  assert.equal(e.events.starts.length, 0);
+  assert.equal(e.events.stops.length, 0);
+  const applied = fixture.auto.applyPending(e.store.readProfiles());
+  assert.equal(e.store.readText(fixture.path), updatedYaml);
+  assert.equal(applied[0].id, fixture.profile.id);
+  assert.equal(applied[0].name, fixture.profile.name);
+  assert.equal(applied[0].url, fixture.profile.url);
+  assert.notEqual(applied[0].revision, fixture.profile.revision);
+  assert.equal(applied[0].updatedAt, e.clock.now);
+  assert.equal(e.store.readProfiles()[0].revision, applied[0].revision);
+  assert.equal(fixture.auto.applyPending(applied)[0].revision, applied[0].revision, 'A candidate can apply only once');
+});
+
+test('a background subscription candidate preserves a connected VPN and applies after disconnect', async e => {
+  const fixture = subscriptionFixture(e);
+  const originalTime = fixture.profile.updatedAt;
+  fixture.profile.updatedAt = e.clock.now;
+  e.store.writeProfiles([fixture.profile]);
+  await e.initialize();
+  const starting = e.model.toggleConnection();
+  await e.clock.until(() => e.model.phase === 'connected' && !e.model.busy);
+  await starting;
+  fixture.profile.updatedAt = originalTime;
+  e.store.writeProfiles([fixture.profile]);
+  await downloadCandidate(e, fixture.auto);
+  await e.clock.advance(11000);
+  assert.equal(e.model.phase, 'connected');
+  assert.equal(e.store.readText(fixture.path), fixture.original);
+  assert.equal(e.store.readProfiles()[0].revision, fixture.profile.revision);
+  assert.equal(e.events.stops.length, 0);
+  assert.equal(e.store.readRequest().cancelled, false);
+  const disconnecting = e.model.toggleConnection();
+  await e.clock.until(() => e.model.phase === 'idle' && !e.model.busy);
+  await disconnecting;
+  await e.clock.advance(11000);
+  assert.equal(e.store.readText(fixture.path), updatedYaml);
+  assert.notEqual(e.model.profiles[0].revision, fixture.profile.revision);
+  assert.equal(e.events.stops.length, 1, 'Only the user disconnect may stop the VPN');
+});
+
+test('an idle foreground check applies a subscription and the next connection reads the new YAML', async e => {
+  const fixture = subscriptionFixture(e);
+  const response = e.holdSubscription();
+  await e.initialize();
+  response.resolve(subscriptionResponse());
+  await flush();
+  await e.clock.advance(11000);
+  assert.equal(e.store.readText(fixture.path), updatedYaml);
+  assert.notEqual(e.model.profiles[0].revision, fixture.profile.revision);
+  const start = e.network.vpnExtension.startVpnExtensionAbility;
+  e.network.vpnExtension.startVpnExtensionAbility = want => {
+    assert.equal(e.store.readText(fixture.path), updatedYaml);
+    return start(want);
+  };
+  const starting = e.model.toggleConnection();
+  await e.clock.until(() => e.model.phase === 'connected' && !e.model.busy);
+  await starting;
+  assert.equal(e.events.starts.length, 1);
+});
+
+test('a staged background update applies synchronously before a connection starts', async e => {
+  const fixture = subscriptionFixture(e);
+  const originalTime = fixture.profile.updatedAt;
+  fixture.profile.updatedAt = e.clock.now;
+  e.store.writeProfiles([fixture.profile]);
+  await e.initialize();
+  fixture.profile.updatedAt = originalTime;
+  e.store.writeProfiles([fixture.profile]);
+  await downloadCandidate(e, fixture.auto);
+  assert.equal(e.store.readText(fixture.path), fixture.original);
+  const start = e.network.vpnExtension.startVpnExtensionAbility;
+  e.network.vpnExtension.startVpnExtensionAbility = want => {
+    assert.equal(e.store.readText(fixture.path), updatedYaml, 'Starting cannot race the next ten-second poll');
+    return start(want);
+  };
+  const starting = e.model.toggleConnection();
+  await e.clock.until(() => e.model.phase === 'connected' && !e.model.busy);
+  await starting;
+  assert.equal(e.events.starts.length, 1);
+});
+
+test('a deleted subscription cannot return from a delayed automatic download', async e => {
+  const fixture = subscriptionFixture(e);
+  const originalTime = fixture.profile.updatedAt;
+  fixture.profile.updatedAt = e.clock.now;
+  e.store.writeProfiles([fixture.profile]);
+  await e.initialize();
+  fixture.profile.updatedAt = originalTime;
+  e.store.writeProfiles([fixture.profile]);
+  const response = e.holdSubscription();
+  const checking = fixture.auto.checkDue();
+  await flush();
+  await e.model.removeProfile(fixture.profile.id);
+  response.resolve(subscriptionResponse());
+  await checking;
+  assert.equal(fixture.auto.applyPending(e.store.readProfiles()).length, 0);
+  assert.equal(e.store.readProfiles().length, 0);
+  assert.equal(e.fileIo.accessSync(fixture.path), false);
+});
+
+test('a manual refresh wins over an older automatic download and its later candidate', async e => {
+  const fixture = subscriptionFixture(e);
+  const originalTime = fixture.profile.updatedAt;
+  fixture.profile.updatedAt = e.clock.now;
+  e.store.writeProfiles([fixture.profile]);
+  await e.initialize();
+  fixture.profile.updatedAt = originalTime;
+  e.store.writeProfiles([fixture.profile]);
+  const automaticResponse = e.holdSubscription();
+  const checking = fixture.auto.checkDue();
+  await flush();
+  const manualResponse = e.holdSubscription();
+  const manualYaml = 'proxies: [{name: manual-refresh-wins, type: direct}]';
+  const refreshing = e.model.refreshProfile(fixture.profile.id);
+  await flush();
+  manualResponse.resolve(subscriptionResponse(manualYaml));
+  await refreshing;
+  const revision = e.store.readProfiles()[0].revision;
+  assert.notEqual(revision, fixture.profile.revision);
+  automaticResponse.resolve(subscriptionResponse());
+  await checking;
+  fixture.auto.applyPending(e.store.readProfiles());
+  assert.equal(e.store.readText(fixture.path), manualYaml);
+  assert.equal(e.store.readProfiles()[0].revision, revision);
+});
+
+test('disabling and re-enabling automatic updates revokes an in-flight download generation', async e => {
+  const fixture = subscriptionFixture(e);
+  fixture.profile.updatedAt = e.clock.now;
+  e.store.writeProfiles([fixture.profile]);
+  await e.initialize();
+  fixture.profile.updatedAt -= 25 * 3600000;
+  e.store.writeProfiles([fixture.profile]);
+  const oldResponse = e.holdSubscription();
+  const checking = fixture.auto.checkDue();
+  await flush();
+  const initialRevision = e.store.readSettings().autoUpdateRevision;
+  await e.model.setAutoUpdateHours(0);
+  const disabledRevision = e.store.readSettings().autoUpdateRevision;
+  assert.notEqual(disabledRevision, initialRevision);
+  fixture.profile.updatedAt = e.clock.now;
+  e.store.writeProfiles([fixture.profile]);
+  await e.model.setAutoUpdateHours(24);
+  assert.notEqual(e.store.readSettings().autoUpdateRevision, disabledRevision);
+  oldResponse.resolve(subscriptionResponse());
+  await checking;
+  await e.clock.advance(11000);
+  assert.equal(e.store.readText(fixture.path), fixture.original);
+  assert.equal(e.store.readProfiles()[0].revision, fixture.profile.revision);
+});
+
+test('cancellation destroys the request and a late automatic response cannot publish', async e => {
+  const fixture = subscriptionFixture(e);
+  const response = e.holdSubscription();
+  const checking = fixture.auto.checkDue();
+  await flush();
+  fixture.auto.cancel();
+  assert.ok(e.events.httpDestroyed.includes(subscriptionUrl));
+  response.resolve(subscriptionResponse());
+  await checking.catch(() => undefined);
+  fixture.auto.applyPending(e.store.readProfiles());
+  assert.equal(e.store.readText(fixture.path), fixture.original);
+  assert.equal(e.store.readProfiles()[0].revision, fixture.profile.revision);
+});
+
+test('the work extension ends within its budget and ignores a transport response arriving after timeout', async e => {
+  const fixture = subscriptionFixture(e);
+  await fixture.auto.reconcileSchedule();
+  const work = [...e.scheduler.works.values()][0];
+  assert.ok(work);
+  const Ability = e.load('workability/HongFlowSubscriptionAbility.ets').default;
+  const ability = new Ability();
+  const response = e.holdSubscription();
+  ability.onWorkStart(work);
+  await flush();
+  await e.clock.advance(120000);
+  assert.ok(e.events.httpDestroyed.includes(subscriptionUrl));
+  assert.ok(e.events.workStops.some(item => item.work.workId === work.workId && !item.needCancel));
+  response.resolve(subscriptionResponse());
+  await flush();
+  fixture.auto.applyPending(e.store.readProfiles());
+  assert.equal(e.store.readText(fixture.path), fixture.original);
+  assert.equal(e.store.readProfiles()[0].revision, fixture.profile.revision);
+});
+
+test('invalid automatic subscription content preserves the active profile and reports an error', async e => {
+  const fixture = subscriptionFixture(e);
+  e.native.validateProfile = async () => JSON.stringify({ valid: false, error: 'Fixture invalid configuration' });
+  await downloadCandidate(e, fixture.auto);
+  fixture.auto.applyPending(e.store.readProfiles());
+  assert.equal(e.store.readText(fixture.path), fixture.original);
+  assert.equal(e.store.readProfiles()[0].revision, fixture.profile.revision);
+  assert.match(fixture.auto.readStatus().error, /更新失败/);
+});
+
+test('a busy foreground operation retains a candidate until that operation completes', async e => {
+  const fixture = subscriptionFixture(e);
+  const originalTime = fixture.profile.updatedAt;
+  fixture.profile.updatedAt = e.clock.now;
+  e.store.writeProfiles([fixture.profile]);
+  await e.initialize();
+  const picker = e.holdPicker();
+  const importing = e.model.importLocalFile();
+  assert.equal(e.model.busy, true);
+  fixture.profile.updatedAt = originalTime;
+  e.store.writeProfiles([fixture.profile]);
+  await downloadCandidate(e, fixture.auto);
+  await e.clock.advance(11000);
+  assert.equal(e.store.readText(fixture.path), fixture.original);
+  assert.equal(e.model.operationKind, 'importLocalFile');
+  picker.resolve([]);
+  await importing;
+  await e.clock.advance(11000);
+  assert.equal(e.store.readText(fixture.path), updatedYaml);
+  assert.equal(e.model.busy, false);
+});
+
+test('a native validation that finishes after the work budget cannot publish its candidate', async e => {
+  const fixture = subscriptionFixture(e);
+  await fixture.auto.reconcileSchedule();
+  const work = [...e.scheduler.works.values()][0];
+  const Ability = e.load('workability/HongFlowSubscriptionAbility.ets').default;
+  const ability = new Ability();
+  const validation = deferred();
+  e.native.validateProfile = () => validation.promise;
+  const response = e.holdSubscription();
+  ability.onWorkStart(work);
+  await flush();
+  response.resolve(subscriptionResponse());
+  await flush();
+  await e.clock.advance(110001);
+  assert.ok(e.events.workStops.some(item => item.work.workId === work.workId && !item.needCancel));
+  validation.resolve(JSON.stringify({ valid: true, proxies: 1, groups: 1, rules: 1, providers: 0, mode: 'rule' }));
+  await flush();
+  fixture.auto.applyPending(e.store.readProfiles());
+  assert.equal(e.store.readText(fixture.path), fixture.original);
+  assert.equal(e.store.readProfiles()[0].revision, fixture.profile.revision);
+});
+
+test('a system work stop cancels an in-flight request before a late response can publish', async e => {
+  const fixture = subscriptionFixture(e);
+  await fixture.auto.reconcileSchedule();
+  const work = [...e.scheduler.works.values()][0];
+  const Ability = e.load('workability/HongFlowSubscriptionAbility.ets').default;
+  const ability = new Ability();
+  const response = e.holdSubscription();
+  ability.onWorkStart(work);
+  await flush();
+  ability.onWorkStop(work);
+  assert.ok(e.events.httpDestroyed.includes(subscriptionUrl));
+  response.resolve(subscriptionResponse());
+  await flush();
+  fixture.auto.applyPending(e.store.readProfiles());
+  assert.equal(e.store.readText(fixture.path), fixture.original);
+  assert.equal(e.events.workStops.filter(item => !item.needCancel).length, 0,
+    'The stopped callback must not finish another system task');
+});
+
+test('an old system stop callback cannot cancel a newly registered subscription task', async e => {
+  const fixture = subscriptionFixture(e);
+  await fixture.auto.reconcileSchedule();
+  const oldWork = [...e.scheduler.works.values()][0];
+  const Ability = e.load('workability/HongFlowSubscriptionAbility.ets').default;
+  const ability = new Ability();
+  const oldResponse = e.holdSubscription();
+  ability.onWorkStart(oldWork);
+  await flush();
+  const settings = e.store.readSettings();
+  settings.autoUpdateHours = 12;
+  settings.autoUpdateRevision = crypto.randomUUID();
+  e.store.writeSettings(settings);
+  await fixture.auto.reconcileSchedule();
+  const newWork = [...e.scheduler.works.values()][0];
+  const newResponse = e.holdSubscription();
+  ability.onWorkStart(newWork);
+  await flush();
+  ability.onWorkStop(oldWork);
+  oldResponse.resolve(subscriptionResponse('proxies: [{name: old-generation, type: direct}]'));
+  await flush();
+  assert.equal(e.events.workStops.filter(item => !item.needCancel).length, 0);
+  newResponse.resolve(subscriptionResponse());
+  await flush();
+  fixture.auto.applyPending(e.store.readProfiles());
+  assert.equal(e.store.readText(fixture.path), updatedYaml);
+  assert.equal(e.events.workStops.filter(item => !item.needCancel).length, 1);
+});
+
+test('timed-out subscription batches resume fairly across instances and an all-fresh check preserves their place', async e => {
+  const fixture = subscriptionFixture(e);
+  const profiles = Array.from({ length: 7 }, (_, index) => ({
+    ...fixture.profile,
+    id: crypto.randomUUID(), revision: crypto.randomUUID(), name: 'Subscription ' + (index + 1),
+    url: 'https://fixture.invalid/subscription-' + (index + 1) + '.yaml'
+  }));
+  e.store.writeProfiles(profiles);
+  for (const [index, profile] of profiles.entries()) {
+    e.store.writeText(e.store.profilePath(profile.id), fixture.original);
+    e.respondToSubscription(profile.url, () => index === 6 ? subscriptionResponse() : new Promise(resolve => {
+      e.clock.set(() => resolve({ responseCode: 503, result: new ArrayBuffer(0) }), 20000);
+    }));
+  }
+  const firstCheck = fixture.auto.checkDue();
+  await e.clock.advance(110000);
+  await firstCheck;
+  assert.deepEqual(e.events.http, profiles.slice(0, 6).map(profile => profile.url));
+
+  const { SubscriptionAutoUpdate } = e.load('service/SubscriptionAutoUpdate.ets');
+  e.store.writeProfiles(profiles.map(profile => ({ ...profile, updatedAt: e.clock.now })));
+  await new SubscriptionAutoUpdate(e.context).checkDue();
+  assert.equal(e.events.http.length, 6, 'Fresh subscriptions need no request and cannot advance the batch');
+
+  e.store.writeProfiles(profiles);
+  const next = new SubscriptionAutoUpdate(e.context);
+  const nextCheck = next.checkDue();
+  await flush();
+  assert.equal(e.events.http[6], profiles[6].url, 'An unattempted subscription must precede earlier failures');
+  next.cancel();
+  await nextCheck;
+  const applied = next.applyPending(e.store.readProfiles());
+  assert.equal(e.store.readText(e.store.profilePath(profiles[6].id)), updatedYaml);
+  assert.notEqual(applied[6].revision, profiles[6].revision);
+  assert.equal(e.store.readText(e.store.profilePath(profiles[0].id)), fixture.original);
+});
+
+test('a stale system start callback cannot cancel the current subscription task', async e => {
+  const fixture = subscriptionFixture(e);
+  await fixture.auto.reconcileSchedule();
+  const oldWork = [...e.scheduler.works.values()][0];
+  const settings = e.store.readSettings();
+  settings.autoUpdateHours = 12;
+  settings.autoUpdateRevision = crypto.randomUUID();
+  e.store.writeSettings(settings);
+  await fixture.auto.reconcileSchedule();
+  const currentWork = [...e.scheduler.works.values()][0];
+  const Ability = e.load('workability/HongFlowSubscriptionAbility.ets').default;
+  const ability = new Ability();
+  const response = e.holdSubscription();
+  ability.onWorkStart(currentWork);
+  await flush();
+  ability.onWorkStart(oldWork);
+  await flush();
+  assert.equal(e.events.http.length, 1, 'The stale callback must not start or replace a request');
+  assert.equal(e.events.httpDestroyed.length, 0, 'The current task must retain its request');
+  assert.equal(e.events.workStops.filter(item => !item.needCancel).length, 0);
+  response.resolve(subscriptionResponse());
+  await flush();
+  fixture.auto.applyPending(e.store.readProfiles());
+  assert.equal(e.store.readText(fixture.path), updatedYaml);
+  assert.equal(e.events.workStops.filter(item => !item.needCancel).length, 1);
+});
+
+test('an old completed task cannot stop a new system registration before its start callback arrives', async e => {
+  const fixture = subscriptionFixture(e);
+  await fixture.auto.reconcileSchedule();
+  const oldWork = [...e.scheduler.works.values()][0];
+  const Ability = e.load('workability/HongFlowSubscriptionAbility.ets').default;
+  const ability = new Ability();
+  const response = e.holdSubscription();
+  ability.onWorkStart(oldWork);
+  await flush();
+  const settings = e.store.readSettings();
+  settings.autoUpdateHours = 12;
+  settings.autoUpdateRevision = crypto.randomUUID();
+  e.store.writeSettings(settings);
+  await fixture.auto.reconcileSchedule();
+  response.resolve(subscriptionResponse());
+  await flush();
+  assert.equal(e.events.workStops.filter(item => !item.needCancel).length, 0,
+    'stopWork uses the shared workId, so an old completion cannot stop the replacement');
+  const registered = [...e.scheduler.works.values()][0];
+  assert.equal(registered.parameters.revision, settings.autoUpdateRevision);
+  fixture.auto.applyPending(e.store.readProfiles());
+  assert.equal(e.store.readText(fixture.path), fixture.original);
+});
+
+test('a profile-list persistence failure restores YAML and retains the candidate for retry', async e => {
+  const fixture = subscriptionFixture(e);
+  await downloadCandidate(e, fixture.auto);
+  const before = e.store.readText(e.store.root + '/profiles.json');
+  const rename = e.fileIo.renameSync;
+  e.fileIo.renameSync = (from, to) => {
+    if (to === e.store.root + '/profiles.json') throw new Error('Fixture profile-list persistence failed');
+    rename(from, to);
+  };
+  assert.throws(() => fixture.auto.applyPending(e.store.readProfiles()), /Fixture profile-list persistence failed/);
+  assert.equal(e.store.readText(fixture.path), fixture.original);
+  assert.equal(e.store.readText(e.store.root + '/profiles.json'), before);
+  e.fileIo.renameSync = rename;
+  fixture.auto.applyPending(e.store.readProfiles());
+  assert.equal(e.store.readText(fixture.path), updatedYaml);
+  assert.notEqual(e.store.readProfiles()[0].revision, fixture.profile.revision);
+});
+
+test('automatic scheduling is persistent, idempotent, replaceable and removable', async e => {
+  const fixture = subscriptionFixture(e);
+  await fixture.auto.reconcileSchedule();
+  await fixture.auto.reconcileSchedule();
+  assert.equal(e.events.workStarts.length, 1);
+  const work = [...e.scheduler.works.values()][0];
+  assert.equal(work.isPersisted, true);
+  assert.equal(work.isRepeat, true);
+  assert.equal(work.repeatCycleTime, 24 * 3600000);
+  assert.equal(work.networkType, 0);
+  for (const hours of [6, 12, 0]) {
+    const settings = e.store.readSettings();
+    settings.autoUpdateHours = hours;
+    settings.autoUpdateRevision = crypto.randomUUID();
+    e.store.writeSettings(settings);
+    await fixture.auto.reconcileSchedule();
+    assert.equal(e.scheduler.works.size, hours === 0 ? 0 : 1);
+    if (hours > 0) assert.equal([...e.scheduler.works.values()][0].repeatCycleTime, hours * 3600000);
+  }
+});
+
+test('transient scheduler errors retry without a false successful registration', async e => {
+  const fixture = subscriptionFixture(e);
+  e.scheduler.failStarts = 1;
+  await assert.rejects(fixture.auto.reconcileSchedule(), /Mock work scheduling failure/);
+  assert.equal(e.scheduler.works.size, 0);
+  await fixture.auto.reconcileSchedule();
+  assert.equal(e.scheduler.works.size, 1);
+  assert.equal(e.events.workStarts.length, 2);
+  e.scheduler.failQueries = 1;
+  await assert.rejects(fixture.auto.reconcileSchedule(), /Mock work query failure/);
+  await fixture.auto.reconcileSchedule();
+  assert.equal(e.events.workStarts.length, 2);
+});
+
+test('foreground subscription checks still download when querying or registering background work fails', async e => {
+  const fixture = subscriptionFixture(e);
+  e.scheduler.failQueries = 1;
+  let response = e.holdSubscription();
+  await e.initialize();
+  await flush();
+  assert.equal(e.events.http.filter(url => url === subscriptionUrl).length, 1);
+  response.resolve(subscriptionResponse());
+  await flush();
+  assert.equal(e.store.readText(fixture.path), updatedYaml);
+
+  const profile = e.store.readProfiles()[0];
+  profile.updatedAt = e.clock.now - 25 * 3600000;
+  e.store.writeProfiles([profile]);
+  e.scheduler.works.clear();
+  e.scheduler.failStarts = 1;
+  const nextYaml = 'proxies: [{name: foreground-retry, type: direct}]';
+  response = e.holdSubscription();
+  e.model.refreshSubscriptions();
+  await flush();
+  assert.equal(e.events.http.filter(url => url === subscriptionUrl).length, 2);
+  response.resolve(subscriptionResponse(nextYaml));
+  await flush();
+  assert.equal(e.store.readText(fixture.path), nextYaml);
+  assert.equal(e.model.autoUpdateCheckedAt, e.clock.now);
+});
+
+test('cancelling an updater allows an immediate new check while its old response is still pending', async e => {
+  const fixture = subscriptionFixture(e);
+  const oldResponse = e.holdSubscription();
+  const oldCheck = fixture.auto.checkDue();
+  await flush();
+  fixture.auto.cancel();
+  const newResponse = e.holdSubscription();
+  const newCheck = fixture.auto.checkDue();
+  await flush();
+  assert.notEqual(newCheck, oldCheck);
+  assert.equal(e.events.http.filter(url => url === subscriptionUrl).length, 2);
+  newResponse.resolve(subscriptionResponse());
+  await newCheck;
+  oldResponse.resolve(subscriptionResponse('proxies: [{name: cancelled-old-check, type: direct}]'));
+  await oldCheck;
+  await flush();
+  fixture.auto.applyPending(e.store.readProfiles());
+  assert.equal(e.store.readText(fixture.path), updatedYaml);
+  assert.notEqual(e.store.readProfiles()[0].revision, fixture.profile.revision);
+});
+
+test('automatic update settings migrate defaults and failed writes cannot claim success', async e => {
+  const settings = e.store.readSettings();
+  delete settings.autoUpdateHours;
+  delete settings.autoUpdateRevision;
+  e.store.writeSettings(settings);
+  const profile = e.store.readProfiles()[0];
+  delete profile.revision;
+  e.store.writeProfiles([profile]);
+  await e.initialize();
+  assert.equal(e.model.autoUpdateHours, 24);
+  assert.equal(e.store.readSettings().autoUpdateHours, 24);
+  assert.match(e.store.readSettings().autoUpdateRevision, /^[0-9a-f-]{36}$/i);
+  const before = e.store.readText(e.store.root + '/settings.json');
+  const rename = e.fileIo.renameSync;
+  e.fileIo.renameSync = (from, to) => {
+    if (to === e.store.root + '/settings.json') throw new Error('Fixture settings persistence failed');
+    rename(from, to);
+  };
+  await assert.rejects(e.model.setAutoUpdateHours(6), /Fixture settings persistence failed/);
+  assert.equal(e.model.autoUpdateHours, 24);
+  assert.equal(e.store.readText(e.store.root + '/settings.json'), before);
+  e.fileIo.renameSync = rename;
+  await e.model.setAutoUpdateHours(12);
+  assert.equal(e.model.autoUpdateHours, 12);
+  assert.equal(e.store.readSettings().autoUpdateHours, 12);
+  await assert.rejects(e.model.setAutoUpdateHours(1));
+  assert.equal(e.model.autoUpdateHours, 12);
 });
 
 module.exports = { environment, flush };

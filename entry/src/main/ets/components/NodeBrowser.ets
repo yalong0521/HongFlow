@@ -12,7 +12,7 @@ export function primaryGroup(model: MainModel): ProxyGroup | undefined {
     model.groups.find((group: ProxyGroup) => isSelectableGroup(group.type)) ?? model.groups[0];
 }
 
-function browserGroup(model: MainModel, groupName: string): ProxyGroup | undefined {
+export function browserGroup(model: MainModel, groupName: string): ProxyGroup | undefined {
   return model.groups.find((group: ProxyGroup) => group.name === groupName) ?? primaryGroup(model);
 }
 
@@ -137,9 +137,6 @@ export struct NodeBrowser {
   private groupHint(): string {
     if (this.model.phase !== 'connected') {
       return '显示上次连接的节点，连接后可切换和测速。';
-    }
-    if (this.model.operationKind === 'selectNode' && this.model.operationTarget === this.group()?.name) {
-      return '正在切换节点…';
     }
     return isSelectableGroup(this.group()?.type ?? '') ? '' : '此代理组自动选择节点，可查看并测速。';
   }
@@ -282,6 +279,11 @@ export struct NodeRow {
     return this.group.now === this.node.name;
   }
 
+  private switching(): boolean {
+    return this.model.operationKind === 'selectNode' && this.model.operationTarget === this.group.name &&
+      this.model.operationNode === this.node.name;
+  }
+
   private delayLabel(): string {
     return this.node.delay > 0 ? `${this.node.delay} ms` : this.node.delay < 0 ? '超时' : '未测';
   }
@@ -313,14 +315,24 @@ export struct NodeRow {
           this.selected() && this.node.delay > 0 ? ThemeTokens.success : ThemeTokens.textSecondary)
         .maxLines(1)
 
-      // 选中指示沿用系统 Radio；可选时由整行按钮统一处理触控、键盘和读屏操作。
-      Radio({ value: this.node.name, group: this.radioScope + ':' + this.group.name })
-        .checked(this.selected())
-        .hitTestBehavior(HitTestMode.None)
-        .focusable(false)
-        .accessibilityLevel('no')
-        .width(20)
-        .height(20)
+      // 保留 Radio 及其系统边距占位，隐藏后叠加进度，避免文字左右移动或行高变化。
+      Stack() {
+        Radio({ value: this.node.name, group: this.radioScope + ':' + this.group.name })
+          .checked(this.selected())
+          .visibility(this.switching() ? Visibility.Hidden : Visibility.Visible)
+          .hitTestBehavior(HitTestMode.None)
+          .focusable(false)
+          .accessibilityLevel('no')
+          .width(20)
+          .height(20)
+        if (this.switching()) {
+          LoadingProgress()
+            .color($r('sys.color.brand'))
+            .width(20)
+            .height(20)
+            .accessibilityLevel('no')
+        }
+      }
     }
     .width('100%')
     .padding({
@@ -350,7 +362,8 @@ export struct NodeRow {
       }
       .width('100%')
       .accessibilityGroup(true)
-      .accessibilityText(`${this.node.name}，${this.selected() ? '当前节点' : '未选择'}，${this.delayLabel()}，只读`)
+      .accessibilityText(this.switching() ? `${this.node.name}，正在切换` :
+        `${this.node.name}，${this.selected() ? '当前节点' : '未选择'}，${this.delayLabel()}，只读`)
     }
   }
 }

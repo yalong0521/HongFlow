@@ -10,7 +10,7 @@ import {
   showError
 } from '../components/AppWidgets';
 import { nativeControlMaterial, nativeControlShadowSpace } from '../components/MaterialSurface';
-import { NodeBrowser, NodeBrowserControls, primaryGroup } from '../components/NodeBrowser';
+import { browserGroup, NodeBrowser, NodeBrowserControls } from '../components/NodeBrowser';
 
 // 两栏需要 280vp 操作区、320vp 节点区，以及间距和页面边距。
 const OVERVIEW_SPLIT_WIDTH: number = 280 + 320 + LayoutTokens.sectionGap + LayoutTokens.pageRegular * 2;
@@ -60,7 +60,10 @@ export struct ConnectionPage {
       if (this.model.profiles.length > 0) {
         ListItem() {
           ConnectionOptions({
-            model: this.model, onOpenProfiles: this.onOpenProfiles, onOpenNodes: () => this.showNodes(),
+            model: this.model,
+            groupName: this.groupName,
+            onOpenProfiles: this.onOpenProfiles,
+            onOpenNodes: () => this.showNodes(),
           })
         }
       }
@@ -120,7 +123,10 @@ export struct ConnectionPage {
               ConnectionControl({ model: this.model, onOpenProfiles: this.onOpenProfiles })
               if (this.model.profiles.length > 0) {
                 ConnectionOptions({
-                  model: this.model, onOpenProfiles: this.onOpenProfiles, onOpenNodes: () => this.showNodes(),
+                  model: this.model,
+                  groupName: this.groupName,
+                  onOpenProfiles: this.onOpenProfiles,
+                  onOpenNodes: () => this.showNodes(),
                 })
               }
               if (this.model.phase === 'connected') {
@@ -235,6 +241,7 @@ struct TrafficMetric {
 @ComponentV2
 struct ConnectionOptions {
   @Require @Param model: MainModel;
+  @Param groupName: string = '';
   @Event onOpenProfiles: () => void = () => {
   };
   @Event onOpenNodes: () => void = () => {
@@ -249,7 +256,8 @@ struct ConnectionOptions {
     if (this.model.mode === 'direct') {
       return undefined;
     }
-    const group = primaryGroup(this.model);
+    // 摘要与下方列表共享浏览组；规则模式没有唯一的全局出口节点。
+    const group = browserGroup(this.model, this.groupName);
     return group?.nodes.find((node: ProxyNode) => node.name === group.now);
   }
 
@@ -284,7 +292,7 @@ struct ConnectionOptions {
             .margin({ left: LayoutTokens.cardPadding, right: LayoutTokens.cardPadding })
           Button({ type: ButtonType.Normal }) {
             Row({ space: 16 }) {
-              Text(this.model.phase === 'connected' ? '当前节点' : '上次节点')
+              Text('组内选择')
                 .fontSize(15).fontColor(ThemeTokens.textPrimary)
               Text(this.currentNode()!.name)
                 .fontSize(15)
@@ -304,11 +312,12 @@ struct ConnectionOptions {
           .backgroundColor(Color.Transparent)
           .constraintSize({ minHeight: 64 })
           .onClick(this.onOpenNodes)
-          .accessibilityText('节点，' + this.currentNode()!.name + '，查看节点列表')
+          .accessibilityText('代理组，' + browserGroup(this.model, this.groupName)!.name + '，已选择，' +
+            this.currentNode()!.name + '，查看节点列表')
         }
         Divider().color($r('sys.color.comp_divider'))
           .margin({ left: LayoutTokens.cardPadding, right: LayoutTokens.cardPadding })
-        Text(this.model.mode === 'global' ? '全部流量通过所选节点转发' :
+        Text(this.model.mode === 'global' ? '全部流量通过全局代理组转发' :
           this.model.mode === 'direct' ? '全部流量直接连接目标网络' : '根据配置规则选择直连或节点转发')
           .fontSize(12)
           .fontColor(ThemeTokens.textSecondary)

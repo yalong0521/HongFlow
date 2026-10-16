@@ -2,6 +2,10 @@ export const APP_BUNDLE_NAME: string = 'com.weiyalong.hongflow';
 
 export const VPN_START_TIMEOUT: number = 30000;
 
+export const DEFAULT_SUBSCRIPTION_UPDATE_HOURS: number = 24;
+
+export const SUBSCRIPTION_UPDATE_HOURS: number[] = [0, 6, 12, 24];
+
 export type OperationKind = 'none' | 'importSubscription' | 'importLocalFile' | 'selectProfile' |
 'refreshProfile' | 'removeProfile' | 'selectNode' | 'testGroup' | 'setMode' | 'connect' | 'disconnect';
 
@@ -15,6 +19,8 @@ export class ProfileInfo {
   url: string = '';
   updatedAt: number = 0;
   nodeCount: number = 0;
+  // 每次内容更新产生新身份，后台旧下载不能覆盖同一毫秒内完成的手动更新。
+  revision: string = '';
 }
 
 @ObservedV2
@@ -65,6 +71,8 @@ export class SavedSettings {
   selectedProfileId: string = '';
   mode: string = 'rule';
   selections: Record<string, Record<string, string>> = {};
+  autoUpdateHours: number = DEFAULT_SUBSCRIPTION_UPDATE_HOURS;
+  autoUpdateRevision: string = '';
 }
 
 export interface ValidationResult {

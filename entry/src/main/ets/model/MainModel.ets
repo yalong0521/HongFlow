@@ -3,7 +3,6 @@ import { http, vpnExtension, webSocket } from '@kit.NetworkKit';
 import { fileIo, picker } from '@kit.CoreFileKit';
 import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { util } from '@kit.ArkTS';
-import native from 'libhongflowbridge.so';
 import {
   LogLine,
   OperationKind,
@@ -12,9 +11,10 @@ import {
   ProxyGroup,
   ProxyNode,
   SavedSettings,
+  DEFAULT_SUBSCRIPTION_UPDATE_HOURS,
+  SUBSCRIPTION_UPDATE_HOURS,
   isSelectableGroup,
   VPN_START_TIMEOUT,
-  ValidationResult,
   VpnRequest,
   VpnSnapshot
 } from './AppModels';
@@ -23,6 +23,8 @@ import { FileStore } from '../service/FileStore';
 import { isVpnRequestReleased } from '../service/VpnNetworkState';
 import { CardCommand, CardCommandInbox } from '../service/CardCommandInbox';
 import { VpnCardService } from '../service/VpnCardService';
+import { MAX_PROFILE_BYTES, SubscriptionService } from '../service/SubscriptionService';
+import { SubscriptionAutoUpdate } from '../service/SubscriptionAutoUpdate';
 
 interface CoreProxy {
   type: string;
@@ -57,7 +59,6 @@ interface NodeSelection {
   name: string;
 }
 
-const MAX_PROFILE_BYTES: number = 5 * 1024 * 1024;
 const HEARTBEAT_TIMEOUT: number = 6000;
 const TEST_URL: string = 'https://www.gstatic.com/generate_204';
 
@@ -88,7 +89,12 @@ export class MainModel {
   @Trace busy: boolean = false;
   @Trace operationKind: OperationKind = 'none';
   @Trace operationTarget: string = '';
+  @Trace operationNode: string = '';
   @Trace cleanupRequired: boolean = false;
+  @Trace autoUpdateHours: number = DEFAULT_SUBSCRIPTION_UPDATE_HOURS;
+  @Trace autoUpdateCheckedAt: number = 0;
+  @Trace autoUpdateError: string = '';
+  @Trace autoUpdateSaving: boolean = false;
   private context?: common.UIAbilityContext;
   private store?: FileStore;
   private settings: SavedSettings = new SavedSettings();
@@ -110,6 +116,10 @@ export class MainModel {
   private lastGroupsAt: number = 0;
   private groupsLoadId: number = 0;
   private cards?: VpnCardService;
+  private subscriptionUpdates?: SubscriptionAutoUpdate;
+  private subscriptionTask?: Promise<void>;
+  private subscriptionStatusAt: number = 0;
+  private subscriptionScheduleError: string = '';
   private cardCommandHandler = (command: CardCommand): void => {
     const generation = this.generation;
     const task = this.applyCardCommand(command);
@@ -147,6 +157,16 @@ export class MainModel {
     const generation = this.generation;
     this.profiles = this.requireStore().readProfiles();
     this.settings = this.requireStore().readSettings();
+    if (!SUBSCRIPTION_UPDATE_HOURS.includes(this.settings.autoUpdateHours)) {
+      this.settings.autoUpdateHours = DEFAULT_SUBSCRIPTION_UPDATE_HOURS;
+    }
+    if (!this.settings.autoUpdateRevision) {
+      this.settings.autoUpdateRevision = util.generateRandomUUID();
+    }
+    this.autoUpdateHours = this.settings.autoUpdateHours;
+    this.subscriptionUpdates = new SubscriptionAutoUpdate(context);
+    this.subscriptionStatusAt = 0;
+    this.subscriptionScheduleError = '';
     this.selectedProfileId = this.profiles.some((profile: ProfileInfo) =>
     profile.id === this.settings.selectedProfileId) ? this.settings.selectedProfileId :
       (this.profiles.length > 0 ? this.profiles[0].id : '');
@@ -183,6 +203,7 @@ export class MainModel {
     if (this.alive(generation)) {
       this.cards?.refresh(true);
       CardCommandInbox.attach(this.cardCommandHandler);
+      this.refreshSubscriptions();
     }
   }
 
@@ -191,6 +212,10 @@ export class MainModel {
     this.disposed = true;
     this.generation += 1;
     this.operationId += 1;
+    this.subscriptionUpdates?.cancel();
+    this.subscriptionUpdates = undefined;
+    this.subscriptionTask = undefined;
+    this.autoUpdateSaving = false;
     if (this.pollTimer !== -1) {
       clearInterval(this.pollTimer);
       this.pollTimer = -1;
@@ -207,6 +232,7 @@ export class MainModel {
     this.busy = false;
     this.operationKind = 'none';
     this.operationTarget = '';
+    this.operationNode = '';
     this.cards = undefined;
     // The Ability owns this shared controller. Disposing it only ends observation;
     // a VPN already running in its extension process keeps its own lifecycle.
@@ -265,8 +291,8 @@ export class MainModel {
   async importSubscription(name: string, url: string): Promise<void> {
     await this.operation('importSubscription', '', async (generation: number) => {
       this.requireDisconnected();
-      const checkedUrl = this.subscriptionUrl(url);
-      const yaml = await this.download(checkedUrl);
+      const checkedUrl = SubscriptionService.checkedUrl(url);
+      const yaml = await new SubscriptionService().download(checkedUrl);
       this.ensureAlive(generation);
       await this.saveProfile(name.trim(), checkedUrl, yaml, generation);
     });
@@ -340,9 +366,9 @@ export class MainModel {
       if (profile.url.length === 0) {
         throw new Error('本地配置请重新从文件导入');
       }
-      const yaml = await this.download(this.subscriptionUrl(profile.url));
+      const yaml = await new SubscriptionService().download(SubscriptionService.checkedUrl(profile.url));
       this.ensureAlive(generation);
-      const validation = await this.validate(yaml);
+      const validation = await SubscriptionService.validate(yaml);
       this.ensureAlive(generation);
       this.requireDisconnected();
       const updated = new ProfileInfo();
@@ -351,6 +377,7 @@ export class MainModel {
       updated.url = profile.url;
       updated.nodeCount = validation.proxies;
       updated.updatedAt = Date.now();
+      updated.revision = util.generateRandomUUID();
       const profiles = this.profiles.map((item: ProfileInfo) => item.id === id ? updated : item);
       this.requireStore().writeText(this.requireStore().profilePath(id), yaml);
       this.requireStore().writeProfiles(profiles);
@@ -396,6 +423,7 @@ export class MainModel {
         throw new Error('节点已经变化，请刷新后重试');
       }
       const selection: NodeSelection = { name: node };
+      this.operationNode = node;
       await api.request('/proxies/' + encodeURIComponent(group), http.RequestMethod.PUT,
         JSON.stringify(selection));
       this.ensureSession(generation, requestId);
@@ -454,6 +482,119 @@ export class MainModel {
     });
   }
 
+  async setAutoUpdateHours(hours: number): Promise<void> {
+    const generation = this.generation;
+    this.ensureAlive(generation);
+    if (!SUBSCRIPTION_UPDATE_HOURS.includes(hours)) {
+      throw new Error('自动更新周期无效');
+    }
+    if (this.autoUpdateSaving) {
+      throw new Error('正在保存自动更新设置');
+    }
+    const updates = new SubscriptionAutoUpdate(this.context!);
+    const previousHours = this.settings.autoUpdateHours;
+    const previousRevision = this.settings.autoUpdateRevision;
+    this.settings.autoUpdateHours = hours;
+    this.settings.autoUpdateRevision = util.generateRandomUUID();
+    try {
+      this.saveSettings();
+    } catch (error) {
+      this.settings.autoUpdateHours = previousHours;
+      this.settings.autoUpdateRevision = previousRevision;
+      throw error as Error;
+    }
+    this.autoUpdateHours = hours;
+    // 新的设置身份立即使后台旧下载失效；本进程也终止未完成的网络请求。
+    this.subscriptionUpdates?.cancel();
+    this.subscriptionUpdates = updates;
+    this.subscriptionTask = undefined;
+    this.autoUpdateSaving = true;
+    try {
+      await updates.reconcileSchedule();
+      if (this.alive(generation) && this.subscriptionUpdates === updates) {
+        this.subscriptionScheduleError = '';
+        this.syncSubscriptionState(true);
+        this.refreshSubscriptions();
+      }
+    } catch (_) {
+      if (this.alive(generation) && this.subscriptionUpdates === updates) {
+        this.subscriptionScheduleError = '设置已保存，后台任务暂未同步，将在下次打开应用时重试。';
+        this.autoUpdateError = this.subscriptionScheduleError;
+      }
+      throw new Error('设置已保存，后台任务暂未同步，请稍后重试。');
+    } finally {
+      if (this.alive(generation) && this.subscriptionUpdates === updates) {
+        this.autoUpdateSaving = false;
+      }
+    }
+  }
+
+  /** 打开应用时补查到期订阅；独立于连接操作，不抢占 busy 或覆盖 VPN 消息。 */
+  refreshSubscriptions(): void {
+    const updates = this.subscriptionUpdates;
+    if (this.disposed || updates === undefined || this.subscriptionTask !== undefined) {
+      return;
+    }
+    const generation = this.generation;
+    const task = updates.reconcileSchedule()
+      .then(() => {
+        if (this.alive(generation) && this.subscriptionUpdates === updates) {
+          this.subscriptionScheduleError = '';
+        }
+      })
+      .catch(() => {
+        if (this.alive(generation) && this.subscriptionUpdates === updates) {
+          this.subscriptionScheduleError = '后台任务暂未同步，打开应用时仍会检查到期订阅。';
+        }
+      })
+      .then(async () => {
+        // 系统任务注册失败不影响这次前台补查。
+        if (this.alive(generation) && this.subscriptionUpdates === updates) {
+          await updates.checkDue();
+        }
+      })
+      .catch(() => {
+        if (this.alive(generation) && this.subscriptionUpdates === updates && !this.subscriptionScheduleError) {
+          this.subscriptionScheduleError = '自动更新暂未完成，将在下次打开应用时重试。';
+        }
+      })
+      .finally(() => {
+        if (this.alive(generation) && this.subscriptionUpdates === updates) {
+          this.subscriptionTask = undefined;
+          this.syncSubscriptionState(true);
+        }
+      });
+    this.subscriptionTask = task;
+  }
+
+  private applySubscriptionUpdates(): void {
+    this.requireDisconnected();
+    const profiles = this.subscriptionUpdates?.applyPending(this.profiles) ?? this.profiles;
+    if (profiles !== this.profiles) {
+      this.profiles = profiles;
+      this.groups = [];
+    }
+  }
+
+  private syncSubscriptionState(force: boolean = false): void {
+    const updates = this.subscriptionUpdates;
+    if (updates === undefined || (!force && Date.now() < this.subscriptionStatusAt)) {
+      return;
+    }
+    this.subscriptionStatusAt = Date.now() + 10000;
+    try {
+      const status = updates.readStatus();
+      this.autoUpdateCheckedAt = status.checkedAt;
+      this.autoUpdateError = this.subscriptionScheduleError || status.error;
+      // 只有控制模型确认断开后才能消费候选；worker 始终不触碰当前使用的配置。
+      if (this.canModifyProfiles) {
+        this.applySubscriptionUpdates();
+      }
+    } catch (_) {
+      this.autoUpdateError = '自动更新结果暂未应用，原连接保持不变。';
+    }
+  }
+
   private async operation(kind: OperationKind, target: string,
     task: (generation: number) => Promise<void>, interrupt: boolean = false): Promise<void> {
     if (this.busy && !interrupt) {
@@ -465,6 +606,7 @@ export class MainModel {
     this.busy = true;
     this.operationKind = kind;
     this.operationTarget = target;
+    this.operationNode = '';
     try {
       await task(generation);
     } catch (error) {
@@ -479,6 +621,11 @@ export class MainModel {
         // current owner can clear the operation shown by the UI.
         this.operationKind = 'none';
         this.operationTarget = '';
+        this.operationNode = '';
+        this.syncSubscriptionState(true);
+        if (kind === 'importSubscription' || kind === 'removeProfile') {
+          this.refreshSubscriptions();
+        }
         this.cards?.refresh();
       }
     }
@@ -486,10 +633,11 @@ export class MainModel {
 
   private async startConnection(generation: number): Promise<void> {
     this.requireDisconnected();
+    this.applySubscriptionUpdates();
     const profile = this.requireProfile(this.selectedProfileId);
     const store = this.requireStore();
     const yaml = store.readText(store.profilePath(profile.id));
-    await this.validate(yaml);
+    await SubscriptionService.validate(yaml);
     this.ensureAlive(generation);
     this.requireDisconnected();
     const request = new VpnRequest();
@@ -876,6 +1024,7 @@ export class MainModel {
     } finally {
       if (this.alive(generation)) {
         this.polling = false;
+        this.syncSubscriptionState();
         this.cards?.refresh();
       }
     }
@@ -1060,47 +1209,8 @@ export class MainModel {
     this.downloadTotal = 0;
   }
 
-  private async download(url: string): Promise<string> {
-    const client = http.createHttp();
-    try {
-      const options: http.HttpRequestOptions = {
-        method: http.RequestMethod.GET,
-        usingCache: false,
-        header: { 'User-Agent': 'ClashMeta HongFlow/0.1.0', 'Accept': 'text/yaml, text/plain, */*' },
-        expectDataType: http.HttpDataType.ARRAY_BUFFER,
-        connectTimeout: 10000,
-        readTimeout: 20000,
-        maxLimit: MAX_PROFILE_BYTES
-      };
-      const response = await client.request(url, options);
-      if (response.responseCode < 200 || response.responseCode >= 300) {
-        throw new Error('订阅下载失败 (' + response.responseCode + ')');
-      }
-      const bytes = response.result as ArrayBuffer;
-      if (bytes.byteLength === 0 || bytes.byteLength > MAX_PROFILE_BYTES) {
-        throw new Error('订阅内容为空或超过 5 MB');
-      }
-      return util.TextDecoder.create('utf-8', { fatal: true }).decodeToString(new Uint8Array(bytes));
-    } catch (error) {
-      throw error as Error;
-    } finally {
-      client.destroy();
-    }
-  }
-
-  private async validate(yaml: string): Promise<ValidationResult> {
-    if (yaml.length === 0 || util.TextEncoder.create().encodeInto(yaml).byteLength > MAX_PROFILE_BYTES) {
-      throw new Error('配置内容为空或超过 5 MB');
-    }
-    const result = JSON.parse(await native.validateProfile(yaml)) as ValidationResult;
-    if (!result.valid) {
-      throw new Error(result.error || '配置校验失败，请使用兼容的 YAML 配置');
-    }
-    return result;
-  }
-
   private async saveProfile(name: string, url: string, yaml: string, generation: number): Promise<void> {
-    const result = await this.validate(yaml);
+    const result = await SubscriptionService.validate(yaml);
     this.ensureAlive(generation);
     this.requireDisconnected();
     const profile = new ProfileInfo();
@@ -1108,6 +1218,7 @@ export class MainModel {
     profile.name = name.length > 0 ? name : (url.length > 0 ? '订阅配置' : '本地配置');
     profile.url = url;
     profile.updatedAt = Date.now();
+    profile.revision = util.generateRandomUUID();
     profile.nodeCount = result.proxies;
     const profiles = [...this.profiles, profile];
     const store = this.requireStore();
@@ -1119,14 +1230,6 @@ export class MainModel {
     }
     this.saveSettings();
     this.message = '配置导入成功';
-  }
-
-  private subscriptionUrl(value: string): string {
-    const url = value.trim();
-    if (!/^https?:\/\/[^\s]+$/i.test(url)) {
-      throw new Error('请输入 http 或 https 开头的订阅链接');
-    }
-    return url;
   }
 
   private requireProfile(id: string): ProfileInfo {

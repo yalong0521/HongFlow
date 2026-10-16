@@ -6,6 +6,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { APP_BUNDLE_NAME, VPN_START_TIMEOUT } from '../model/AppModels';
 import { CardCommand } from './CardCommandInbox';
 import { FileStore } from './FileStore';
+import { isVpnRequestReleased } from './VpnNetworkState';
 
 export interface VpnCardData {
   phase: string;
@@ -26,6 +27,8 @@ interface CardWantParameters {
 
 const FORM_NAME: string = 'HongFlowQuick';
 const HEARTBEAT_TIMEOUT: number = 6000;
+const RECOVERY_REFRESH_MINUTES: number = 5;
+const REFRESH_RENEW_INTERVAL: number = 60000;
 
 /** Card data contains public display fields and a separate control token, never core secrets. */
 export class VpnCardService {
@@ -36,6 +39,7 @@ export class VpnCardService {
   private updating: boolean = false;
   private dirty: boolean = false;
   private forcePending: boolean = false;
+  private renewRefreshAt: number = 0;
 
   constructor(context: common.Context) {
     this.store = new FileStore(context);
@@ -82,6 +86,7 @@ export class VpnCardService {
     try {
       const data = this.addForm(formId);
       await formProvider.updateForm(formId, formBindingData.createFormBindingData(data));
+      await this.scheduleRecoveryRefresh(formId, this.data(formId, data.cardToken));
     } catch (error) {
       throw error as Error;
     }
@@ -138,9 +143,11 @@ export class VpnCardService {
       const force = this.forcePending;
       this.forcePending = false;
       const state = this.data('', '');
-      // Heartbeats refresh private state each second; only display changes need IPC.
+      // Heartbeats refresh private state each second; only display changes publish card data.
       const signature = JSON.stringify([state.phase, state.action, state.requestId]);
-      if (!force && signature === this.lastSignature) {
+      const publishData = force || signature !== this.lastSignature;
+      const renewRefresh = this.needsRecoveryRefresh(state) && Date.now() >= this.renewRefreshAt;
+      if (!publishData && !renewRefresh) {
         continue;
       }
       // A temporary Form service failure must recover without a new VPN phase.
@@ -156,6 +163,7 @@ export class VpnCardService {
       this.failedSignature = '';
       this.retryAt = 0;
       let failed = false;
+      let refreshFailed = false;
       for (const form of forms) {
         if (form.bundleName !== APP_BUNDLE_NAME || form.moduleName !== 'entry' ||
           form.abilityName !== 'HongFlowFormAbility' || form.formName !== FORM_NAME) {
@@ -168,13 +176,22 @@ export class VpnCardService {
         try {
           // Re-read inside the serialized publisher so queued heartbeats cannot
           // publish a connected state captured before a later stop.
-          await formProvider.updateForm(form.formId,
-            formBindingData.createFormBindingData(this.data(form.formId, token)));
+          if (publishData) {
+            await formProvider.updateForm(form.formId,
+              formBindingData.createFormBindingData(this.data(form.formId, token)));
+          }
+          // 预约由系统持有；心跳存活时后移，进程被清理后仍有机会唤醒卡片提供方。
+          // 同状态续约不重发卡片数据，避免每秒 IPC，也不依赖不保证执行的 onDestroy。
+          if (!(await this.scheduleRecoveryRefresh(form.formId, this.data(form.formId, token)))) {
+            refreshFailed = true;
+          }
         } catch (error) {
           failed = true;
           hilog.warn(0x0000, 'HongFlow', '更新桌面卡片失败: %{public}s', String(error));
         }
       }
+      // 预约失败只重试预约，已成功发布的数据不能因此反复触发静态卡片重绘。
+      this.renewRefreshAt = Date.now() + (refreshFailed ? 30000 : REFRESH_RENEW_INTERVAL);
       if (!failed) {
         this.lastSignature = signature;
       } else {
@@ -182,6 +199,24 @@ export class VpnCardService {
         this.failedSignature = signature;
         this.retryAt = Date.now() + 30000;
       }
+    }
+  }
+
+  private needsRecoveryRefresh(data: VpnCardData): boolean {
+    return data.phase === 'connected' || data.phase === 'starting' || data.phase === 'stopping';
+  }
+
+  private async scheduleRecoveryRefresh(formId: string, data: VpnCardData): Promise<boolean> {
+    if (!this.needsRecoveryRefresh(data)) {
+      return true;
+    }
+    try {
+      // 公开接口最短为 5 分钟，且与周期刷新共享每日配额，不能保证强杀后即时刷新。
+      await formProvider.setFormNextRefreshTime(formId, RECOVERY_REFRESH_MINUTES);
+      return true;
+    } catch (error) {
+      hilog.warn(0x0000, 'HongFlow', '预约桌面卡片刷新失败: %{public}s', String(error));
+      return false;
     }
   }
 
@@ -207,6 +242,12 @@ export class VpnCardService {
       phase = now - request.createdAt < VPN_START_TIMEOUT ? 'starting' : 'error';
     } else if (snapshot.phase === 'error') {
       phase = 'error';
+    }
+    if (matching && snapshot.phase === 'connected' && snapshot.updatedAt > 0 &&
+      now - snapshot.updatedAt > HEARTBEAT_TIMEOUT && isVpnRequestReleased(request, snapshot)) {
+      // 强杀可能遗留“已连接”文件；只校正显示，系统停止与请求清理仍交给既有控制流程。
+      // 使用自有网卡身份判断，不能把其他应用的 VPN 当成鸿流仍然连接。
+      phase = 'idle';
     }
     const needsStop = phase === 'connected' || phase === 'starting' || phase === 'stopping' ||
       request?.stopping === true || activeSnapshot || (request !== undefined && !request.cancelled);
