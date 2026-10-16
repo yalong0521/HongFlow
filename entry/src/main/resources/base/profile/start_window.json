@@ -1,4 +1,6 @@
 {
   "startWindowAppIcon": "$media:start_window_icon",
-  "startWindowBackgroundColor": "$color:start_window_background"
+  "startWindowBrandingImage": "$media:start_window_brand",
+  "startWindowBackgroundColor": "$color:start_window_background",
+  "startWindowColorModeType": "FOLLOW_SYSTEM"
 }
